@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b45wocd6a72ei"]
+
+[ext_resource type="Script" uid="uid://lfnksb06307l" path="res://draggable_square.gd" id="1_y4sij"]
+
+[node name="Square" type="Node2D"]
+script = ExtResource("1_y4sij")

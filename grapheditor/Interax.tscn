@@ -1,0 +1,54 @@
+[gd_scene load_steps=2 format=3 uid="uid://d070305ehsns4"]
+
+[ext_resource type="Script" uid="uid://boweupipcxvgc" path="res://interax.gd" id="1_t2qxs"]
+
+[node name="Interax" type="Node2D"]
+script = ExtResource("1_t2qxs")
+
+[node name="ExecuteButton" type="Button" parent="."]
+offset_left = 4.0
+offset_top = 96.0
+offset_right = 43.0
+offset_bottom = 127.0
+text = "Run"
+
+[node name="XDistancesEdit" type="LineEdit" parent="."]
+z_index = 20
+offset_left = 73.0
+offset_top = 7.0
+offset_right = 535.0
+offset_bottom = 38.0
+keep_editing_on_text_submit = true
+expand_to_text_length = true
+
+[node name="YDistancesEdit" type="LineEdit" parent="."]
+z_index = 20
+offset_left = 72.0
+offset_top = 52.0
+offset_right = 531.0
+offset_bottom = 83.0
+keep_editing_on_text_submit = true
+virtual_keyboard_enabled = false
+
+[node name="XLabel" type="Label" parent="."]
+offset_left = 17.0
+offset_top = 12.0
+offset_right = 53.0
+offset_bottom = 61.0
+text = "X
+"
+
+[node name="YLabel2" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 55.0
+offset_right = 56.0
+offset_bottom = 78.0
+text = "Y"
+
+[node name="Background" type="ColorRect" parent="."]
+z_index = -5
+offset_left = 5.0
+offset_top = 3.0
+offset_right = 53.0
+offset_bottom = 91.0
+color = Color(0.118581, 0.118581, 0.118581, 1)

@@ -1,0 +1,168 @@
+[gd_scene load_steps=5 format=3 uid="uid://deowvp7e3vf5f"]
+
+[ext_resource type="Script" uid="uid://coqsrwl2tywjt" path="res://main_scene.gd" id="1_glv2v"]
+[ext_resource type="Script" uid="uid://bvxiqhv36sh4w" path="res://background.gd" id="2_r0du0"]
+[ext_resource type="Script" uid="uid://cm6biilwqeppc" path="res://connections.gd" id="2_uu6xs"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_r0du0"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_glv2v")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+drag_horizontal_enabled = true
+drag_vertical_enabled = true
+
+[node name="CirclesContainer" type="Node2D" parent="."]
+
+[node name="Connections" type="Node2D" parent="."]
+z_index = -1
+script = ExtResource("2_uu6xs")
+
+[node name="Background" type="Node2D" parent="."]
+z_index = -3
+script = ExtResource("2_r0du0")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+layer = 0
+
+[node name="FileDialog" type="FileDialog" parent="CanvasLayer"]
+mode = 1
+position = Vector2i(0, 36)
+access = 2
+
+[node name="SaveButton" type="Button" parent="CanvasLayer"]
+offset_left = 15.0
+offset_top = 41.0
+offset_right = 59.0
+offset_bottom = 72.0
+text = "Save"
+
+[node name="LoadButton" type="Button" parent="CanvasLayer"]
+offset_left = 67.0
+offset_top = 40.0
+offset_right = 113.0
+offset_bottom = 71.0
+text = "Load"
+
+[node name="AddCircleButton" type="Button" parent="CanvasLayer"]
+offset_left = 18.0
+offset_top = 124.0
+offset_right = 112.0
+offset_bottom = 155.0
+text = "Node
+"
+
+[node name="AddSquareButton" type="Button" parent="CanvasLayer"]
+offset_left = 18.0
+offset_top = 162.0
+offset_right = 114.0
+offset_bottom = 193.0
+text = "Room"
+
+[node name="AddIconButton" type="Button" parent="CanvasLayer"]
+offset_left = 22.0
+offset_top = 203.0
+offset_right = 114.0
+offset_bottom = 234.0
+text = "Window"
+
+[node name="AddDoorButton" type="Button" parent="CanvasLayer"]
+offset_left = 24.0
+offset_top = 244.0
+offset_right = 114.0
+offset_bottom = 275.0
+text = "Door"
+
+[node name="View3DButton" type="Button" parent="CanvasLayer"]
+offset_left = 29.0
+offset_top = 319.0
+offset_right = 111.0
+offset_bottom = 350.0
+text = "3D"
+
+[node name="ConnectModeButton" type="CheckButton" parent="CanvasLayer"]
+anchors_preset = -1
+anchor_right = 0.153
+anchor_bottom = 0.034
+offset_left = 15.0
+offset_top = 287.0
+offset_right = -0.256012
+offset_bottom = 295.968
+text = "Connect mode"
+
+[node name="PropertiesPanel" type="Panel" parent="CanvasLayer"]
+layout_direction = 1
+offset_left = 20.0
+offset_top = 370.0
+offset_right = 244.0
+offset_bottom = 516.0
+
+[node name="TypeLabel" type="Label" parent="CanvasLayer/PropertiesPanel"]
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 7.405
+anchor_bottom = 0.575
+offset_left = 21.0
+offset_top = 18.0
+offset_right = -1563.7
+offset_bottom = -207.975
+text = "Type"
+
+[node name="TypeOptionButton" type="OptionButton" parent="CanvasLayer/PropertiesPanel"]
+layout_mode = 0
+offset_left = 66.0
+offset_top = 17.0
+offset_right = 212.0
+offset_bottom = 37.0
+
+[node name="NameLabel" type="Label" parent="CanvasLayer/PropertiesPanel"]
+layout_mode = 0
+offset_left = 11.0
+offset_top = 53.0
+offset_right = 58.0
+offset_bottom = 76.0
+text = "Name"
+
+[node name="NameLineEdit" type="LineEdit" parent="CanvasLayer/PropertiesPanel"]
+layout_mode = 0
+offset_left = 68.0
+offset_top = 51.0
+offset_right = 216.0
+offset_bottom = 82.0
+
+[node name="DistancesLineEdit" type="LineEdit" parent="CanvasLayer/PropertiesPanel"]
+layout_mode = 0
+offset_right = 68.5625
+offset_bottom = 31.0
+placeholder_text = "x:[]; y:[]"
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="CanvasLayer"]
+z_index = 11
+offset_left = 21.0
+offset_top = 546.0
+offset_right = 352.0
+offset_bottom = 826.0
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="CanvasLayer/SubViewportContainer"]
+handle_input_locally = false
+size = Vector2i(331, 280)
+render_target_update_mode = 4
+
+[node name="Node3D" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport"]
+
+[node name="Camera3D" type="Camera3D" parent="CanvasLayer/SubViewportContainer/SubViewport/Node3D"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CanvasLayer/SubViewportContainer/SubViewport/Node3D"]
+mesh = SubResource("BoxMesh_r0du0")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CanvasLayer/SubViewportContainer/SubViewport/Node3D"]
+
+[node name="AddInteraxButton" type="Button" parent="CanvasLayer"]
+offset_left = 127.0
+offset_top = 39.0
+offset_right = 191.0
+offset_bottom = 70.0
+text = "Interax
+"

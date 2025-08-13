@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3 uid="uid://dhm67omdy2hvt"]
+
+[ext_resource type="Script" uid="uid://xnm6h6plg21b" path="res://draggable_door.gd" id="1_iu8q0"]
+[ext_resource type="Texture2D" uid="uid://c63b2f8gytr3x" path="res://icons/door.png" id="2_cuixy"]
+
+[node name="Node2D" type="Node2D"]
+script = ExtResource("1_iu8q0")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+position = Vector2(-2, 2)
+scale = Vector2(0.73, 0.623333)
+texture = ExtResource("2_cuixy")

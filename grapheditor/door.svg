@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="64.075958"
+   height="34.079285"
+   version="1.1"
+   id="svg6"
+   sodipodi:docname="door.svg"
+   inkscape:version="1.3 (0e150ed6c4, 2023-07-21)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs6" />
+  <sodipodi:namedview
+     id="namedview6"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="3.0351563"
+     inkscape:cx="58.481338"
+     inkscape:cy="-22.898327"
+     inkscape:window-width="1920"
+     inkscape:window-height="991"
+     inkscape:window-x="-9"
+     inkscape:window-y="-9"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg6" />
+  <rect
+     style="fill:#cae41f;fill-opacity:1;stroke:#391d1d;stroke-width:0.0970891;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect6"
+     width="63.978867"
+     height="33.982197"
+     x="0.048544548"
+     y="0.048544548" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke:#391d1d;stroke-width:0.034098;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect7"
+     width="6.5539541"
+     height="11.227093"
+     x="0.024031255"
+     y="11.765918" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke:#391d1d;stroke-width:0.034098;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect7-7"
+     width="6.5539541"
+     height="11.227093"
+     x="57.473454"
+     y="11.426093" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke:#391d1d;stroke-width:0.034098;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect7-7-4"
+     width="6.5539541"
+     height="11.227093"
+     x="27.241383"
+     y="11.426097" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke:#391d1d;stroke-width:0.0621008;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect8"
+     width="20.646328"
+     height="5.3186817"
+     x="6.5643697"
+     y="14.720122" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke:#391d1d;stroke-width:0.0664616;stroke-opacity:1;paint-order:markers fill stroke"
+     id="rect8-7"
+     width="23.647444"
+     height="5.3186817"
+     x="33.826015"
+     y="14.380301" />
+</svg>

@@ -1,0 +1,37 @@
+[gd_scene load_steps=4 format=3 uid="uid://deowvp7e3vf5f"]
+
+[ext_resource type="Script" uid="uid://coqsrwl2tywjt" path="res://main_scene.gd" id="1_glv2v"]
+[ext_resource type="Script" uid="uid://bvxiqhv36sh4w" path="res://background.gd" id="2_r0du0"]
+[ext_resource type="Script" uid="uid://cm6biilwqeppc" path="res://connections.gd" id="2_uu6xs"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_glv2v")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+layer = 0
+
+[node name="Background" type="Node2D" parent="CanvasLayer"]
+z_index = -3
+script = ExtResource("2_r0du0")
+
+[node name="CirclesContainer" type="Node2D" parent="CanvasLayer"]
+
+[node name="AddCircleButton" type="Button" parent="CanvasLayer"]
+offset_left = 18.0
+offset_top = 32.0
+offset_right = 85.0
+offset_bottom = 63.0
+text = "Adauga"
+
+[node name="Connections" type="Node2D" parent="CanvasLayer"]
+z_index = -1
+script = ExtResource("2_uu6xs")
+
+[node name="ConnectModeButton" type="CheckButton" parent="CanvasLayer"]
+offset_left = 17.0
+offset_top = 68.0
+offset_right = 178.0
+offset_bottom = 99.0
+text = "Connect mode"
+
+[node name="Camera2D" type="Camera2D" parent="."]
