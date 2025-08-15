@@ -5,6 +5,28 @@ var selected_connection = null
 
 signal connection_selected(connection)
 
+# Dictionar meta pentru conexiuni (folosit de PropertiesPanel)
+var connection_info = {
+	"has_wall": true,
+	"wall_type": "",
+	"has_beam": true,
+	"beam_type": "",
+	"offset_start": 0.125,
+	"offset_end": -0.125
+}
+
+# Alias so PropertiesPanel can read connection metadata via the same `node_info` name used for nodes
+var node_info = connection_info
+
+func _ready():
+	# Ensure defaults are synced (keeps shape similar to Circle.gd pattern)
+	connection_info["has_wall"] = bool(connection_info.get("has_wall", true))
+	connection_info["wall_type"] = str(connection_info.get("wall_type", ""))
+	connection_info["has_beam"] = bool(connection_info.get("has_beam", true))
+	connection_info["beam_type"] = str(connection_info.get("beam_type", ""))
+	connection_info["offset_start"] = float(connection_info.get("offset_start", 0.125))
+	connection_info["offset_end"] = float(connection_info.get("offset_end", -0.125))
+
 func update_connections(new_connections):
 	connections = new_connections
 	queue_redraw()

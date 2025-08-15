@@ -8,6 +8,15 @@ var type = "Process"  # Tipul nodului (Input, Output, Process)
 var obj_name = "Icon"  # Numele nodului
 var id = 0  # ID unic pentru nod
 
+# Dictionar meta pentru nod (compatibil cu PropertiesPanel / Circle.gd)
+var node_info = {
+	"index": 0,
+	"type": "icon",
+	"name": "icon0",
+	"offset": 1.0,
+	"elevation": 0.9
+}
+
 signal circle_selected_for_connection(node)  # Semnal pentru conexiune
 signal circle_selected_for_properties(node)  # Semnal pentru proprietăți
 
@@ -18,6 +27,12 @@ func _ready():
 	if sprite == null:
 		push_error("Sprite2D nu a fost găsit în Icon!")
 		return
+
+	# sincronizează node_info cu proprietățile curente ale nodului
+	node_info["name"] = str(type) + str(id)
+	node_info["index"] = id
+	node_info["type"] = type
+	obj_name = node_info["name"]
 
 func _draw():
 	# Desenează un contur pentru selecție

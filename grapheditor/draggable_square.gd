@@ -4,15 +4,30 @@ var size = 30.0  # Dimensiunea pătratului (lățime/înălțime)
 var is_selected = false  # Starea de selecție pentru mutare
 var is_dragging = false  # Starea de drag
 var is_selected_for_connection = false  # Starea de selecție pentru conexiune
-var type = "Process"  # Tipul nodului (Input, Output, Process)
-var obj_name = "Square"  # Numele nodului
+var type = "room"  # Tipul nodului (room, shell, cell)
+var obj_name = "room0"  # Numele nodului (default type+index)
 var id = 0  # ID unic pentru nod
+
+# Dictionar meta pentru nod (compatibil cu PropertiesPanel / Circle.gd)
+var node_info = {
+	"index": 0,
+	"type": "room",
+	"name": "room0",
+	"offset": 0.0,
+	"height": 2.55
+}
 
 signal circle_selected_for_connection(node)  # Semnal pentru conexiune (compatibil cu cercurile)
 signal circle_selected_for_properties(node)  # Semnal pentru proprietăți
 
 func _ready():
 	set_process_input(true)
+	# sincronizează node_info cu proprietățile curente ale nodului
+	node_info["name"] = str(type) + str(id)
+	node_info["index"] = id
+	node_info["type"] = type
+	# keep obj_name consistent
+	obj_name = node_info["name"]
 
 func _draw():
 	# Schimbă culoarea în funcție de stare

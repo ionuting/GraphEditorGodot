@@ -8,11 +8,29 @@ var type = "Node"  # Tipul nodului (Input, Output, Process)
 var obj_name = "Node"  # Numele nodului
 var id = 0  # ID unic pentru nod
 
+# Dictionar meta pentru nod
+# - index: int
+# - type: string ("ax" default, alternative "nonax")
+# - name: string
+# - has_column: bool
+# - column_type: string
+var node_info = {
+	"index": 0,
+	"type": "ax",
+	"name": "Node",
+	"has_column": true,
+	"column_type": "2525"
+}
+
 signal circle_selected_for_connection(node)  # Semnal pentru conexiune
 signal circle_selected_for_properties(node)  # Semnal pentru proprietăți
 
 func _ready():
 	set_process_input(true)
+	# sincronizează node_info cu proprietățile curente ale nodului
+	node_info["name"] = obj_name
+	node_info["index"] = id
+	node_info["type"] = type
 
 func _draw():
 	# Schimbă culoarea în funcție de stare

@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3 uid="uid://deowvp7e3vf5f"]
+[gd_scene load_steps=6 format=3 uid="uid://deowvp7e3vf5f"]
 
 [ext_resource type="Script" uid="uid://coqsrwl2tywjt" path="res://main_scene.gd" id="1_glv2v"]
 [ext_resource type="Script" uid="uid://bvxiqhv36sh4w" path="res://background.gd" id="2_r0du0"]
 [ext_resource type="Script" uid="uid://cm6biilwqeppc" path="res://connections.gd" id="2_uu6xs"]
+[ext_resource type="Script" uid="uid://cjetnwsc7oion" path="res://PropertiesPanel.gd" id="4_cm0pq"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_r0du0"]
 
@@ -93,56 +94,18 @@ text = "Connect mode"
 
 [node name="PropertiesPanel" type="Panel" parent="CanvasLayer"]
 layout_direction = 1
-offset_left = 20.0
+offset_left = 8.0
 offset_top = 370.0
-offset_right = 244.0
-offset_bottom = 516.0
-
-[node name="TypeLabel" type="Label" parent="CanvasLayer/PropertiesPanel"]
-layout_mode = 1
-anchors_preset = -1
-anchor_right = 7.405
-anchor_bottom = 0.575
-offset_left = 21.0
-offset_top = 18.0
-offset_right = -1563.7
-offset_bottom = -207.975
-text = "Type"
-
-[node name="TypeOptionButton" type="OptionButton" parent="CanvasLayer/PropertiesPanel"]
-layout_mode = 0
-offset_left = 66.0
-offset_top = 17.0
-offset_right = 212.0
-offset_bottom = 37.0
-
-[node name="NameLabel" type="Label" parent="CanvasLayer/PropertiesPanel"]
-layout_mode = 0
-offset_left = 11.0
-offset_top = 53.0
-offset_right = 58.0
-offset_bottom = 76.0
-text = "Name"
-
-[node name="NameLineEdit" type="LineEdit" parent="CanvasLayer/PropertiesPanel"]
-layout_mode = 0
-offset_left = 68.0
-offset_top = 51.0
-offset_right = 216.0
-offset_bottom = 82.0
-
-[node name="DistancesLineEdit" type="LineEdit" parent="CanvasLayer/PropertiesPanel"]
-layout_mode = 0
-offset_right = 68.5625
-offset_bottom = 31.0
-placeholder_text = "x:[]; y:[]"
+offset_right = 341.0
+offset_bottom = 922.0
+script = ExtResource("4_cm0pq")
 
 [node name="SubViewportContainer" type="SubViewportContainer" parent="CanvasLayer"]
 z_index = 11
-offset_left = 21.0
-offset_top = 546.0
-offset_right = 352.0
-offset_bottom = 826.0
+offset_left = 40.0
+offset_top = 1060.0
+offset_right = 371.0
+offset_bottom = 1340.0
 stretch = true
 
 [node name="SubViewport" type="SubViewport" parent="CanvasLayer/SubViewportContainer"]

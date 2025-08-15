@@ -13,6 +13,10 @@ signal circle_selected_for_properties(node)
 signal execute_pressed(node)
 signal close_pressed(node)
 
+# Table popup runtime state
+var _table_popup: PopupPanel = null
+var _table_rows := [] # array of dictionaries {no_label, x_edit, y_edit, z_edit}
+
 func _ready():
 	# Verifică nodurile necesare
 	if not has_node("ExecuteButton"):
@@ -23,8 +27,15 @@ func _ready():
 		return
 	# Conectează semnalele
 	$ExecuteButton.pressed.connect(_on_execute_pressed)
-	$XDistancesEdit.text_changed.connect(_on_x_distances_changed)
-	$YDistancesEdit.text_changed.connect(_on_y_distances_changed)
+	# parse on text submit so partial typing doesn't get reset mid-edit
+	if $XDistancesEdit.has_method("text_submitted"):
+		$XDistancesEdit.text_submitted.connect(_on_x_distances_changed)
+	else:
+		$XDistancesEdit.text_changed.connect(_on_x_distances_changed)
+	if $YDistancesEdit.has_method("text_submitted"):
+		$YDistancesEdit.text_submitted.connect(_on_y_distances_changed)
+	else:
+		$YDistancesEdit.text_changed.connect(_on_y_distances_changed)
 	if has_node("CloseButton"):
 		$CloseButton.pressed.connect(_on_close_pressed)
 	# Setează Mouse Filter și Editable
@@ -38,16 +49,22 @@ func _ready():
 		$XDistancesEdit.mouse_filter = Control.MOUSE_FILTER_STOP
 		$XDistancesEdit.editable = true
 		$XDistancesEdit.context_menu_enabled = true
+		$XDistancesEdit.visible = false
 	if has_node("YDistancesEdit"):
 		$YDistancesEdit.mouse_filter = Control.MOUSE_FILTER_STOP
 		$YDistancesEdit.editable = true
 		$YDistancesEdit.context_menu_enabled = true
+		$YDistancesEdit.visible = false
 	update_labels()
 	# Log pentru depanare
 	print("Ierarhie Interax:", get_children())
 	print("ExecuteButton conectat:", $ExecuteButton.pressed.is_connected(_on_execute_pressed))
 	print("XDistancesEdit conectat:", $XDistancesEdit.text_changed.is_connected(_on_x_distances_changed))
 	print("YDistancesEdit conectat:", $YDistancesEdit.text_changed.is_connected(_on_y_distances_changed))
+
+
+	# build table popup UI for editing rows
+	_build_table_popup()
 
 func _draw():
 	if is_selected_for_connection:
@@ -152,3 +169,183 @@ func update_labels():
 func reset_connection_selection():
 	is_selected_for_connection = false
 	queue_redraw()
+
+
+### Popup table builders / handlers
+func _build_table_popup():
+	# create a PopupPanel with a VBoxContainer and header + ScrollContainer table
+	_table_popup = PopupPanel.new()
+	_table_popup.name = "DistancesTablePopup"
+	var vbox = VBoxContainer.new()
+	vbox.name = "VBoxContainer"
+	_table_popup.add_child(vbox)
+
+	# header HBox with title and buttons
+	var header = HBoxContainer.new()
+	var title = Label.new()
+	title.text = "Edit Distances Table"
+	title.custom_minimum_size = Vector2(200, 0)
+	header.add_child(title)
+	header.add_spacer(0)
+	var add_btn = Button.new()
+	add_btn.text = "Add Row"
+	add_btn.connect("pressed", Callable(self, "_on_add_row_pressed"))
+	header.add_child(add_btn)
+	var save_btn = Button.new()
+	save_btn.text = "Save"
+	save_btn.connect("pressed", Callable(self, "_on_save_table_pressed"))
+	header.add_child(save_btn)
+	var close_btn = Button.new()
+	close_btn.text = "Close"
+	close_btn.connect("pressed", Callable(self, "_on_close_table_pressed"))
+	header.add_child(close_btn)
+	vbox.add_child(header)
+
+	# column labels
+	var cols = HBoxContainer.new()
+	for col_name in ["no", "x", "y", "z"]:
+		var lbl = Label.new()
+		lbl.text = col_name
+		lbl.custom_minimum_size = Vector2(80, 0)
+		cols.add_child(lbl)
+	vbox.add_child(cols)
+
+	# scrollcontainer for rows
+	var scroll = ScrollContainer.new()
+	scroll.name = "ScrollContainer"
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(400, 200)
+	var rows_v = VBoxContainer.new()
+	rows_v.name = "Rows"
+	scroll.add_child(rows_v)
+	vbox.add_child(scroll)
+
+	add_child(_table_popup)
+	_table_popup.popup_centered()
+	_populate_table_from_distances()
+
+func _populate_table_from_distances():
+	if not _table_popup:
+		return
+	var rows_v = _table_popup.get_node("VBoxContainer/ScrollContainer/Rows") if _table_popup.has_node("VBoxContainer/ScrollContainer/Rows") else null
+	if not rows_v:
+		# try to find by traversing
+		for child in _table_popup.get_children():
+			if child is VBoxContainer:
+				for sc in child.get_children():
+					if sc is ScrollContainer:
+						rows_v = sc.get_node("Rows") if sc.has_node("Rows") else null
+	if not rows_v:
+		push_error("Rows container not found in popup")
+		return
+	# clear existing
+	for c in rows_v.get_children():
+		c.queue_free()
+	_table_rows.clear()
+
+	# build from distances; ensure distances_table exists
+	if not has_meta("distances_table"):
+		set_meta("distances_table", [])
+	var table = get_meta("distances_table")
+	# fallback: if table empty but distances present, build rows from distances arrays
+	if table.size() == 0 and distances.size() >= 2:
+		# try to align elements; use max length of inner lists
+		var max_rows = max(distances[0].size(), distances[1].size())
+		for i in range(max_rows):
+			var x = distances[0][i] if i < distances[0].size() else 0.0
+			var y = distances[1][i] if i < distances[1].size() else 0.0
+			table.append({"x": x, "y": y, "z": 0.0})
+		set_meta("distances_table", table)
+
+	for i in range(table.size()):
+		var row = table[i]
+		_add_table_row(i + 1, float(row.get("x", 0.0)), float(row.get("y", 0.0)), float(row.get("z", 0.0)))
+
+func _add_table_row(no: int, x_val: float, y_val: float, z_val: float):
+	if not _table_popup:
+		return
+	var rows_v = _table_popup.get_node("VBoxContainer/ScrollContainer/Rows") if _table_popup.has_node("VBoxContainer/ScrollContainer/Rows") else null
+	if not rows_v:
+		# traverse to find
+		for child in _table_popup.get_children():
+			if child is VBoxContainer:
+				for sc in child.get_children():
+					if sc is ScrollContainer:
+						rows_v = sc.get_node("Rows") if sc.has_node("Rows") else null
+	if not rows_v:
+		push_error("Rows container not found for adding row")
+		return
+
+	var h = HBoxContainer.new()
+	var no_lbl = Label.new()
+	no_lbl.text = str(no)
+	no_lbl.custom_minimum_size = Vector2(40, 0)
+	h.add_child(no_lbl)
+
+	var x_edit = LineEdit.new()
+	x_edit.text = str(x_val)
+	x_edit.custom_minimum_size = Vector2(80, 0)
+	h.add_child(x_edit)
+
+	var y_edit = LineEdit.new()
+	y_edit.text = str(y_val)
+	y_edit.custom_minimum_size = Vector2(80, 0)
+	h.add_child(y_edit)
+
+	var z_edit = LineEdit.new()
+	z_edit.text = str(z_val)
+	z_edit.custom_minimum_size = Vector2(80, 0)
+	h.add_child(z_edit)
+
+	rows_v.add_child(h)
+	_table_rows.append({"no_label": no_lbl, "x_edit": x_edit, "y_edit": y_edit, "z_edit": z_edit})
+
+func _on_add_row_pressed():
+	var next_no = _table_rows.size() + 1
+	_add_table_row(next_no, 0.0, 0.0, 0.0)
+
+func _on_save_table_pressed():
+	# validate and write back into meta and distances arrays
+	var table = []
+	for r in _table_rows:
+		var xs = r.x_edit.text.strip_edges()
+		var ys = r.y_edit.text.strip_edges()
+		var zs = r.z_edit.text.strip_edges()
+		var valid = true
+		var xv = 0.0
+		var yv = 0.0
+		var zv = 0.0
+		if xs.is_valid_float():
+			xv = float(xs)
+		else:
+			valid = false
+		if ys.is_valid_float():
+			yv = float(ys)
+		else:
+			valid = false
+		if zs.is_valid_float():
+			zv = float(zs)
+		else:
+			valid = false
+		if not valid:
+			push_error("Invalid numeric value in table row; save aborted")
+			return
+		table.append({"x": xv, "y": yv, "z": zv})
+
+	set_meta("distances_table", table)
+	# also sync into distances two arrays for backward compatibility
+	var xs_list = []
+	var ys_list = []
+	for row in table:
+		xs_list.append(row.x)
+		ys_list.append(row.y)
+	distances = [xs_list, ys_list]
+	update_labels()
+	_on_close_table_pressed()
+
+func _on_close_table_pressed():
+	if _table_popup:
+		_table_popup.hide()
+		_table_popup.queue_free()
+		_table_popup = null
+		_table_rows.clear()

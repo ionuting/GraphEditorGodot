@@ -1,30 +1,32 @@
 extends Node
 
-@onready var circles_container = $CirclesContainer
-@onready var button = $CanvasLayer/AddCircleButton
-@onready var square_button = $CanvasLayer/AddSquareButton
-@onready var icon_button = $CanvasLayer/AddIconButton
-@onready var door_button = $CanvasLayer/AddDoorButton
-@onready var interax_button = $CanvasLayer/AddInteraxButton
-@onready var view_3d_button = $CanvasLayer/View3DButton
-@onready var viewport_container = $CanvasLayer/SubViewportContainer
-@onready var connections = $Connections
-@onready var connect_mode_button = $CanvasLayer/ConnectModeButton
-@onready var camera = $Camera2D
-@onready var file_dialog = $CanvasLayer/FileDialog
-@onready var save_button = $CanvasLayer/SaveButton
-@onready var load_button = $CanvasLayer/LoadButton
-@onready var background = $Background
-@onready var properties_panel = $CanvasLayer/PropertiesPanel
-@onready var type_option_button = $CanvasLayer/PropertiesPanel/TypeOptionButton
-@onready var name_line_edit = $CanvasLayer/PropertiesPanel/NameLineEdit
-@onready var distances_line_edit = $CanvasLayer/PropertiesPanel/DistancesLineEdit
+# --- UI references (onready)
+@onready var ui_circles_container = $CirclesContainer
+@onready var ui_button = $CanvasLayer/AddCircleButton
+@onready var ui_square_button = $CanvasLayer/AddSquareButton
+@onready var ui_icon_button = $CanvasLayer/AddIconButton
+@onready var ui_door_button = $CanvasLayer/AddDoorButton
+@onready var ui_interax_button = $CanvasLayer/AddInteraxButton
+@onready var ui_view_3d_button = $CanvasLayer/View3DButton
+@onready var ui_viewport_container = $CanvasLayer/SubViewportContainer
+@onready var ui_connections = $Connections
+@onready var ui_connect_mode_button = $CanvasLayer/ConnectModeButton
+@onready var ui_camera = $Camera2D
+@onready var ui_file_dialog = $CanvasLayer/FileDialog
+@onready var ui_save_button = $CanvasLayer/SaveButton
+@onready var ui_load_button = $CanvasLayer/LoadButton
+@onready var ui_background = $Background
+@onready var ui_properties_panel = $CanvasLayer/PropertiesPanel
+# name/distances controls moved into PropertiesPanel.gd
 
+# --- Scenes (preloads) (names match usages below)
 var circle_scene = preload("res://Circle.tscn")
 var square_scene = preload("res://Square.tscn")
 var icon_scene = preload("res://Icon.tscn")
 var door_scene = preload("res://Door.tscn")
 var interax_scene = preload("res://Interax.tscn")
+
+# --- State ---
 var connections_list = []
 var selected_circle = null
 var selected_for_properties = null
@@ -34,129 +36,165 @@ var is_panning = false
 var pan_start_pos = Vector2.ZERO
 var next_id = 0
 var is_save_mode = false
-var interax_node = null  # Referință la nodul Interax unic
+var interax_node = null  # single Interax node reference
+
+func _init_ui():
+	# Initialize basic UI defaults and random seed
+	if Engine.has_singleton("RandomNumberGenerator"):
+		randomize()
+	else:
+		randomize()
+
+	if ui_properties_panel:
+		ui_properties_panel.visible = false
+	if ui_viewport_container:
+		ui_viewport_container.visible = false
+	if ui_file_dialog:
+		ui_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		ui_file_dialog.filters = ["*.json ; JSON Files"]
+	if ui_connect_mode_button:
+		if ui_connect_mode_button.has_method("set_pressed"):
+			ui_connect_mode_button.set_pressed(false)
+		else:
+			ui_connect_mode_button.pressed = false
+
+
+# Runtime references to dynamic NodeInfo UI controls (created at runtime)
+var ui_nodeinfo_index_label = null
+var ui_nodeinfo_type_option = null
+var ui_nodeinfo_has_column = null
+var ui_nodeinfo_column_type = null
 
 func _ready():
-	# Verifică dacă nodurile sunt găsite
-	if button == null:
-		push_error("Butonul 'AddCircleButton' nu a fost găsit!")
+	_init_ui()
+	_build_properties_panel()
+	_connect_signals()
+	_create_initial_circle()
+	_hide_panels()
+
+	# If the PropertiesPanel has our new script, connect its signal
+	if ui_properties_panel and ui_properties_panel.has_method("connect"):
+		# connect when the panel script emits changes
+		if ui_properties_panel.has_method("connect"):
+			# avoid double-connecting
+			var p = ui_properties_panel
+			if p.has_method("build_from_node"):
+				p.connect("property_changed", Callable(self, "_on_panel_property_changed"))
+
+
+## Build dynamic controls for node_info inside the PropertiesPanel
+func _build_properties_panel():
+	# If a dedicated PropertiesPanel script exists, let it manage the UI entirely
+	if ui_properties_panel == null:
 		return
-	if save_button == null:
-		push_error("Butonul 'SaveButton' nu a fost găsit!")
+	if ui_properties_panel.has_method("build_from_node"):
 		return
-	if load_button == null:
-		push_error("Butonul 'LoadButton' nu a fost găsit!")
-		return
-	if file_dialog == null:
-		push_error("FileDialog nu a fost găsit!")
-		return
-	if square_button == null:
-		push_error("Butonul 'AddSquareButton' nu a fost găsit!")
-		return
-	if icon_button == null:
-		push_error("Butonul 'AddIconButton' nu a fost găsit!")
-		return
-	if door_button == null:
-		push_error("Butonul 'AddDoorButton' nu a fost găsit!")
-		return
-	if interax_button == null:
-		push_error("Butonul 'AddInteraxButton' nu a fost găsit!")
-		return
-	if view_3d_button == null:
-		push_error("Butonul 'View3DButton' nu a fost găsit!")
-		return
-	if viewport_container == null:
-		push_error("SubViewportContainer nu a fost găsit!")
-		return
-	if circles_container == null:
-		push_error("CirclesContainer nu a fost găsit!")
-		return
-	if connections == null:
-		push_error("Connections nu a fost găsit! Verifică ierarhia scenei.")
-		return
-	if connect_mode_button == null:
-		push_error("ConnectModeButton nu a fost găsit!")
-		return
-	if camera == null:
-		push_error("Camera2D nu a fost găsit!")
-		return
-	if background == null:
-		push_error("Background nu a fost găsit!")
-		return
-	if properties_panel == null:
-		push_error("PropertiesPanel nu a fost găsit!")
-		return
-	if type_option_button == null:
-		push_error("TypeOptionButton nu a fost găsit!")
-		return
-	if name_line_edit == null:
-		push_error("NameLineEdit nu a fost găsit!")
-		return
-	if distances_line_edit == null:
-		push_error("DistancesLineEdit nu a fost găsit!")
-		return
-	
-	# Configurează FileDialog pentru a filtra doar fișiere .json
-	file_dialog.filters = ["*.json ; JSON Files"]
-	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	
-	# Conectează semnalele
-	save_button.pressed.connect(_on_save_button_pressed)
-	load_button.pressed.connect(_on_load_button_pressed)
-	file_dialog.file_selected.connect(_on_file_dialog_file_selected)
-	button.pressed.connect(_on_button_pressed)
-	square_button.pressed.connect(_on_square_button_pressed)
-	icon_button.pressed.connect(_on_icon_button_pressed)
-	door_button.pressed.connect(_on_door_button_pressed)
-	interax_button.pressed.connect(_on_interax_button_pressed)
-	view_3d_button.pressed.connect(_on_view_3d_button_pressed)
-	connect_mode_button.toggled.connect(_on_connect_mode_toggled)
-	type_option_button.item_selected.connect(_on_type_selected)
-	name_line_edit.text_changed.connect(_on_name_changed)
-	distances_line_edit.text_changed.connect(_on_distances_changed)
-	connections.connection_selected.connect(_on_connection_selected)
-	
-	# Inițializează opțiunile pentru TypeOptionButton
-	type_option_button.add_item("Input", 0)
-	type_option_button.add_item("Output", 1)
-	type_option_button.add_item("Process", 2)
-	
-	# Creează un cerc inițial
-	var initial_circle = circle_scene.instantiate()
-	initial_circle.global_position = Vector2(100, 100)
-	initial_circle.type = "Input"
-	initial_circle.obj_name = "Node1"
-	initial_circle.id = next_id
+	# Create Index label
+	if not ui_properties_panel.has_node("NodeInfoIndexLabel"):
+		var lbl = Label.new()
+		lbl.name = "NodeInfoIndexLabel"
+		lbl.text = "Index:"
+		ui_properties_panel.add_child(lbl)
+	ui_nodeinfo_index_label = ui_properties_panel.get_node("NodeInfoIndexLabel")
+
+	# Create node_info type option (ax / nonax)
+	if not ui_properties_panel.has_node("NodeInfoTypeOption"):
+		var opt = OptionButton.new()
+		opt.name = "NodeInfoTypeOption"
+		opt.add_item("ax", 0)
+		opt.add_item("nonax", 1)
+		ui_properties_panel.add_child(opt)
+	ui_nodeinfo_type_option = ui_properties_panel.get_node("NodeInfoTypeOption")
+
+	# Create Has Column checkbox
+	if not ui_properties_panel.has_node("NodeInfoHasColumn"):
+		var chk = CheckBox.new()
+		chk.name = "NodeInfoHasColumn"
+		chk.text = "Has Column"
+		ui_properties_panel.add_child(chk)
+	ui_nodeinfo_has_column = ui_properties_panel.get_node("NodeInfoHasColumn")
+
+	# Create Column Type line edit
+	if not ui_properties_panel.has_node("NodeInfoColumnTypeLineEdit"):
+		var col = LineEdit.new()
+		col.name = "NodeInfoColumnTypeLineEdit"
+		col.placeholder_text = "Column type"
+		ui_properties_panel.add_child(col)
+	ui_nodeinfo_column_type = ui_properties_panel.get_node("NodeInfoColumnTypeLineEdit")
+
+	# Connect signals for node_info controls
+	if ui_nodeinfo_type_option:
+		ui_nodeinfo_type_option.item_selected.connect(_on_nodeinfo_type_selected)
+	if ui_nodeinfo_has_column:
+		ui_nodeinfo_has_column.toggled.connect(_on_nodeinfo_has_column_toggled)
+	if ui_nodeinfo_column_type:
+		ui_nodeinfo_column_type.text_changed.connect(_on_nodeinfo_column_type_changed)
+	ui_file_dialog.filters = ["*.json ; JSON Files"]
+	ui_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+
+func _connect_signals():
+	ui_save_button.pressed.connect(_on_save_button_pressed)
+	ui_load_button.pressed.connect(_on_load_button_pressed)
+	ui_file_dialog.file_selected.connect(_on_file_dialog_file_selected)
+	ui_button.pressed.connect(_on_button_pressed)
+	ui_square_button.pressed.connect(_on_square_button_pressed)
+	ui_icon_button.pressed.connect(_on_icon_button_pressed)
+	ui_door_button.pressed.connect(_on_door_button_pressed)
+	ui_interax_button.pressed.connect(_on_interax_button_pressed)
+	ui_view_3d_button.pressed.connect(_on_view_3d_button_pressed)
+	ui_connect_mode_button.toggled.connect(_on_connect_mode_toggled)
+	# name/distances editing is handled by PropertiesPanel.gd now
+	ui_connections.connection_selected.connect(_on_connection_selected)
+
+
+
+func _create_initial_circle():
+	var initial = circle_scene.instantiate()
+	initial.global_position = Vector2(100, 100)
+	initial.type = "Node"
+	initial.obj_name = "Node1"
+	initial.id = next_id
 	next_id += 1
-	circles_container.add_child(initial_circle)
-	
-	# Conectează semnalele pentru noduri
-	for node in circles_container.get_children():
-		node.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
-		node.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
-		if node.get_script() and node.get_script().resource_path.ends_with("interax.gd"):
-			node.execute_pressed.connect(_on_interax_execute_pressed)
-			node.close_pressed.connect(_on_interax_close_pressed)
-	
-	# Depanare: Loghează scripturile nodurilor
-	for node in circles_container.get_children():
-		var script = node.get_script()
-		print("Node:", node, "Script:", script.resource_path if script else "No script")
-	
-	# Ascunde panoul de proprietăți, scena 3D și dialogul de fișiere inițial
-	properties_panel.visible = false
-	viewport_container.visible = false
-	file_dialog.visible = false
+	ui_circles_container.add_child(initial)
+	initial.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
+	initial.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
+
+func _hide_panels():
+	ui_properties_panel.visible = false
+	ui_viewport_container.visible = false
+	ui_file_dialog.visible = false
+
+
+## Node creation helpers
+func _add_node(scene, position: Vector2, node_type: String, node_name: String):
+	var n = scene.instantiate()
+	n.global_position = position
+	n.type = node_type
+	n.obj_name = node_name
+	n.id = next_id
+	next_id += 1
+	ui_circles_container.add_child(n)
+	n.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
+	n.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
+	if n.get_script() and n.get_script().resource_path.ends_with("interax.gd"):
+		n.execute_pressed.connect(_on_interax_execute_pressed)
+		n.close_pressed.connect(_on_interax_close_pressed)
+	return n
+
+func _add_node_random(scene, node_type: String, name_prefix: String):
+	var pos = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
+	var node_name = name_prefix + str(ui_circles_container.get_child_count() + 1)
+	return _add_node(scene, pos, node_type, node_name)
 
 func _input(event):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			camera.zoom *= 1.1
-			camera.zoom = camera.zoom.clamp(Vector2(0.5, 0.5), Vector2(2.0, 2.0))
+			ui_camera.zoom *= 1.1
+			ui_camera.zoom = ui_camera.zoom.clamp(Vector2(0.5, 0.5), Vector2(2.0, 2.0))
 			update_scene()
 		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			camera.zoom /= 1.1
-			camera.zoom = camera.zoom.clamp(Vector2(0.5, 0.5), Vector2(2.0, 2.0))
+			ui_camera.zoom /= 1.1
+			ui_camera.zoom = ui_camera.zoom.clamp(Vector2(0.5, 0.5), Vector2(2.0, 2.0))
 			update_scene()
 	
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
@@ -167,8 +205,8 @@ func _input(event):
 			is_panning = false
 	
 	if event is InputEventMouseMotion and is_panning:
-		var delta = (event.position - pan_start_pos) / camera.zoom
-		camera.offset -= delta
+		var delta = (event.position - pan_start_pos) / ui_camera.zoom
+		ui_camera.offset -= delta
 		pan_start_pos = event.position
 		update_scene()
 	
@@ -184,33 +222,33 @@ func _input(event):
 				node_to_delete.queue_free()
 				if selected_connection:
 					selected_connection = null
-					connections.selected_connection = null
-					connections.queue_redraw()
+					ui_connections.selected_connection = null
+					ui_connections.queue_redraw()
 				update_connections()
 				update_properties_panel()
 				print("Nod șters:", node_to_delete.obj_name)
 			elif selected_connection != null:
 				connections_list.erase(selected_connection)
 				selected_connection = null
-				connections.selected_connection = null
-				connections.queue_redraw()
+				ui_connections.selected_connection = null
+				ui_connections.queue_redraw()
 				update_connections()
 				update_properties_panel()
 				print("Conexiune ștearsă")
 
 func _on_save_button_pressed():
 	is_save_mode = true
-	file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	file_dialog.title = "Save Graph"
-	file_dialog.current_file = "graph.json"
-	file_dialog.show()
+	ui_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	ui_file_dialog.title = "Save Graph"
+	ui_file_dialog.current_file = "graph.json"
+	ui_file_dialog.show()
 
 func _on_load_button_pressed():
 	is_save_mode = false
-	file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	file_dialog.title = "Load Graph"
-	file_dialog.current_file = ""
-	file_dialog.show()
+	ui_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	ui_file_dialog.title = "Load Graph"
+	ui_file_dialog.current_file = ""
+	ui_file_dialog.show()
 
 func _on_file_dialog_file_selected(path: String):
 	var final_path = path
@@ -223,67 +261,67 @@ func _on_file_dialog_file_selected(path: String):
 
 func _on_button_pressed():
 	var new_circle = circle_scene.instantiate()
-	new_circle.global_position = camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / camera.zoom
+	new_circle.global_position = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
 	new_circle.type = "Process"
-	new_circle.obj_name = "Node" + str(circles_container.get_child_count() + 1)
+	new_circle.obj_name = "Node" + str(ui_circles_container.get_child_count() + 1)
 	new_circle.id = next_id
 	next_id += 1
-	circles_container.add_child(new_circle)
+	ui_circles_container.add_child(new_circle)
 	new_circle.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 	new_circle.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 
 func _on_square_button_pressed():
 	var new_square = square_scene.instantiate()
-	new_square.global_position = camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / camera.zoom
-	new_square.type = "Process"
-	new_square.obj_name = "Square" + str(circles_container.get_child_count() + 1)
+	new_square.global_position = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
+	new_square.type = "Room"
+	new_square.obj_name = "Square" + str(ui_circles_container.get_child_count() + 1)
 	new_square.id = next_id
 	next_id += 1
-	circles_container.add_child(new_square)
+	ui_circles_container.add_child(new_square)
 	new_square.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 	new_square.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 
 func _on_icon_button_pressed():
 	var new_icon = icon_scene.instantiate()
-	new_icon.global_position = camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / camera.zoom
-	new_icon.type = "Process"
-	new_icon.obj_name = "Icon" + str(circles_container.get_child_count() + 1)
+	new_icon.global_position = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
+	new_icon.type = "Window"
+	new_icon.obj_name = "Icon" + str(ui_circles_container.get_child_count() + 1)
 	new_icon.id = next_id
 	next_id += 1
-	circles_container.add_child(new_icon)
+	ui_circles_container.add_child(new_icon)
 	new_icon.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 	new_icon.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 
 func _on_door_button_pressed():
 	var new_door = door_scene.instantiate()
-	new_door.global_position = camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / camera.zoom
-	new_door.type = "Process"
-	new_door.obj_name = "Door" + str(circles_container.get_child_count() + 1)
+	new_door.global_position = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
+	new_door.type = "Door"
+	new_door.obj_name = "Door" + str(ui_circles_container.get_child_count() + 1)
 	new_door.id = next_id
 	next_id += 1
-	circles_container.add_child(new_door)
+	ui_circles_container.add_child(new_door)
 	new_door.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 	new_door.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 
 func _on_interax_button_pressed():
 	if interax_node == null:
 		# Creează un nou nod Interax
 		var new_interax = interax_scene.instantiate()
-		new_interax.global_position = camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / camera.zoom
-		new_interax.type = "Process"
+		new_interax.global_position = ui_camera.offset + Vector2(randi_range(-300, 300), randi_range(-200, 200)) / ui_camera.zoom
+		new_interax.type = "Node"
 		new_interax.obj_name = "Interax"
 		new_interax.id = next_id
 		#new_interax.distances = [[1.0], [1.0]]
 		next_id += 1
-		circles_container.add_child(new_interax)
+		ui_circles_container.add_child(new_interax)
 		new_interax.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 		new_interax.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
 		new_interax.execute_pressed.connect(_on_interax_execute_pressed)
@@ -294,17 +332,17 @@ func _on_interax_button_pressed():
 		# Comută vizibilitatea nodului Interax existent
 		interax_node.visible = !interax_node.visible
 		print("Interax vizibilitate comutată:", interax_node.obj_name, "Visible:", interax_node.visible)
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 
 func _on_view_3d_button_pressed():
-	viewport_container.visible = !viewport_container.visible
+	ui_viewport_container.visible = !ui_viewport_container.visible
 
 func _on_connect_mode_toggled(toggled_on):
 	connect_mode = toggled_on
 	if not toggled_on:
 		selected_circle = null
-		for node in circles_container.get_children():
+		for node in ui_circles_container.get_children():
 			node.reset_connection_selection()
 
 func is_connect_mode_active():
@@ -321,7 +359,7 @@ func _on_circle_selected_for_connection(node):
 		push_error("Nodul selectat are un script neașteptat: ", script_path, " Node:", node)
 		return
 	if selected_circle == null:
-		for c in circles_container.get_children():
+		for c in ui_circles_container.get_children():
 			c.reset_connection_selection()
 		selected_circle = node
 		node.is_selected_for_connection = true
@@ -339,8 +377,8 @@ func _on_circle_selected_for_connection(node):
 			var new_connection = [selected_circle, node, "Edge" + str(connections_list.size() + 1), "Process"]
 			connections_list.append(new_connection)
 			print("Conexiune adăugată:", selected_circle.obj_name, "->", node.obj_name, "cu name:", new_connection[2], "și type:", new_connection[3])
-			if connections != null:
-				connections.update_connections(connections_list)
+			if ui_connections != null:
+				ui_connections.update_connections(connections_list)
 		selected_circle = null
 
 func _on_circle_selected_for_properties(node):
@@ -353,8 +391,8 @@ func _on_circle_selected_for_properties(node):
 		return
 	selected_for_properties = node
 	selected_connection = null
-	connections.selected_connection = null
-	connections.queue_redraw()
+	ui_connections.selected_connection = null
+	ui_connections.queue_redraw()
 	update_properties_panel()
 
 func _on_connection_selected(connection):
@@ -368,8 +406,8 @@ func _on_interax_execute_pressed(node):
 	if not square_scene:
 		push_error("square_scene nu este încărcat!")
 		return
-	if not circles_container:
-		push_error("circles_container nu este găsit!")
+	if not ui_circles_container:
+		push_error("ui_circles_container nu este găsit!")
 		return
 	var origin = Vector2(50, 600)  # Stânga jos
 	var x_distances = node.distances[0]
@@ -382,11 +420,11 @@ func _on_interax_execute_pressed(node):
 		for y in y_distances:
 			var new_square = square_scene.instantiate()
 			new_square.global_position = origin + Vector2(x_sum * scale, -y_sum * scale)
-			new_square.type = "Process"
+			new_square.type = "Room"
 			new_square.obj_name = "Square_" + str(x_sum) + "_" + str(y_sum)
 			new_square.id = next_id
 			next_id += 1
-			circles_container.add_child(new_square)
+			ui_circles_container.add_child(new_square)
 			new_square.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 			new_square.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
 			print("Rectangle generat:", new_square.obj_name, "la:", new_square.global_position)
@@ -403,50 +441,32 @@ func _on_interax_close_pressed(node):
 	node.queue_free()
 	if selected_connection:
 		selected_connection = null
-		connections.selected_connection = null
-		connections.queue_redraw()
+		ui_connections.selected_connection = null
+		ui_connections.queue_redraw()
 	update_connections()
 	update_properties_panel()
 	print("Nod Interax șters:", node.obj_name)
 
 func update_properties_panel():
 	if selected_for_properties != null:
-		properties_panel.visible = true
-		name_line_edit.text = selected_for_properties.obj_name
-		distances_line_edit.visible = selected_for_properties.get_script().resource_path.ends_with("interax.gd")
-		if distances_line_edit.visible:
-			var distances = selected_for_properties.distances
-			distances_line_edit.text = "x:" + str(distances[0]).replace("[", "").replace("]", "") + "; y:" + str(distances[1]).replace("[", "").replace("]", "")
-		else:
-			distances_line_edit.text = ""
-		match selected_for_properties.type:
-			"Input":
-				type_option_button.select(0)
-			"Output":
-				type_option_button.select(1)
-			"Process":
-				type_option_button.select(2)
-			_:
-				type_option_button.select(-1)
+		ui_properties_panel.visible = true
+		# Basic properties
+		# Basic properties are handled by PropertiesPanel.gd
+		# type selection removed
+
+		# Delegate building the detailed properties to the PropertiesPanel script if present
+		if ui_properties_panel and ui_properties_panel.has_method("build_from_node"):
+			ui_properties_panel.build_from_node(selected_for_properties)
+
 	elif selected_connection != null:
-		properties_panel.visible = true
-		name_line_edit.text = selected_connection[2]
-		distances_line_edit.visible = false
-		distances_line_edit.text = ""
-		match selected_connection[3]:
-			"Input":
-				type_option_button.select(0)
-			"Output":
-				type_option_button.select(1)
-			"Process":
-				type_option_button.select(2)
-			_:
-				type_option_button.select(-1)
+		ui_properties_panel.visible = true
+		# connection properties: delegate to PropertiesPanel by passing the connections node
+		if ui_properties_panel and ui_properties_panel.has_method("build_from_node"):
+			# the PropertiesPanel expects a node that exposes `node_info`; `Connections` now aliases that
+			ui_properties_panel.build_from_node(ui_connections)
 	else:
-		properties_panel.visible = false
-		name_line_edit.text = ""
-		distances_line_edit.text = ""
-		type_option_button.select(-1)
+		ui_properties_panel.visible = false
+		# type selection removed
 
 func _on_type_selected(index):
 	if selected_for_properties != null:
@@ -462,9 +482,55 @@ func _on_type_selected(index):
 		selected_connection[3] = type
 		print("Tip conexiune actualizat:", selected_connection[0].obj_name, "->", selected_connection[1].obj_name, "la:", type)
 
+func _on_nodeinfo_type_selected(index):
+	# index 0 -> ax, 1 -> nonax
+	if selected_for_properties != null and selected_for_properties.has_method("get"):
+		var ni = selected_for_properties.get("node_info")
+		if ni != null:
+			ni["type"] = "ax" if index == 0 else "nonax"
+			update_properties_panel()
+
+func _on_panel_property_changed(node, key, value):
+	# Persist changes from the PropertiesPanel script into the scene and UI
+	if node == null:
+		return
+	# node_info updates are already written by the panel; ensure any special fields sync
+	if key == "name":
+		node.obj_name = value
+	elif key == "distances":
+		node.distances = value
+		if node.has_method("update_labels"):
+			node.update_labels()
+	# After any change, redraw connections and refresh UI
+	update_connections()
+	update_properties_panel()
+
+func _on_nodeinfo_has_column_toggled(pressed: bool):
+	if selected_for_properties != null and selected_for_properties.has_method("get"):
+		var ni = selected_for_properties.get("node_info")
+		if ni != null:
+			ni["has_column"] = pressed
+			if not pressed:
+				ni["column_type"] = ""
+			if ui_nodeinfo_column_type:
+				ui_nodeinfo_column_type.visible = pressed
+			update_properties_panel()
+
+func _on_nodeinfo_column_type_changed(new_text: String):
+	if selected_for_properties != null and selected_for_properties.has_method("get"):
+		var ni = selected_for_properties.get("node_info")
+		if ni != null:
+			ni["column_type"] = new_text
+			update_properties_panel()
+
 func _on_name_changed(new_text):
 	if selected_for_properties != null:
 		selected_for_properties.obj_name = new_text
+		# also update node_info.name when present
+		if selected_for_properties.has_method("get"):
+			var ni = selected_for_properties.get("node_info")
+			if ni != null:
+				ni["name"] = new_text
 	elif selected_connection != null:
 		selected_connection[2] = new_text
 		print("Nume conexiune actualizat:", selected_connection[0].obj_name, "->", selected_connection[1].obj_name, "la:", new_text)
@@ -502,15 +568,15 @@ func _on_distances_changed(new_text):
 			print("Distanțe actualizate pentru Interax:", selected_for_properties.obj_name, distances)
 		else:
 			distances = selected_for_properties.distances
-			distances_line_edit.text = "x:" + str(distances[0]).replace("[", "").replace("]", "") + "; y:" + str(distances[1]).replace("[", "").replace("]", "")
+			# distances UI moved to PropertiesPanel; just log and keep existing values
 			print("Format invalid pentru distanțe:", new_text)
 
 func update_connections():
-	if connections != null:
-		connections.update_connections(connections_list)
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
 		print("Connections list:", connections_list)
-	if background != null:
-		background.queue_redraw()
+	if ui_background != null:
+		ui_background.queue_redraw()
 
 func update_scene():
 	update_connections()
@@ -523,7 +589,7 @@ func save_graph(file_path: String):
 		"timestamp": Time.get_datetime_string_from_system()
 	}
 	
-	for node in circles_container.get_children():
+	for node in ui_circles_container.get_children():
 		if node.get_script() == null:
 			push_error("Nodul nu are script atașat: ", node)
 			continue
@@ -544,6 +610,12 @@ func save_graph(file_path: String):
 		}
 		if node_shape == "Interax":
 			node_data["distances"] = node.distances
+		# persist node_info when present
+		var ni = null
+		if node.has_method("get"):
+			ni = node.get("node_info")
+		if ni != null:
+			node_data["node_info"] = ni
 		graph_data["nodes"].append(node_data)
 	
 	for connection in connections_list:
@@ -598,7 +670,7 @@ func load_graph(file_path: String):
 		return
 	
 	# Șterge nodurile existente și resetează interax_node
-	for node in circles_container.get_children():
+	for node in ui_circles_container.get_children():
 		node.queue_free()
 	connections_list.clear()
 	interax_node = null
@@ -634,13 +706,21 @@ func load_graph(file_path: String):
 		new_node.obj_name = node_data["label"]
 		new_node.id = next_id
 		new_node.visible = node_data.get("visible", true)
+		# Restore node_info if saved; ensure index aligns with assigned id
+		var saved_ni = node_data.get("node_info", null)
+		if saved_ni != null:
+			new_node.node_info = saved_ni
+			new_node.node_info["index"] = new_node.id
+			# Prefer saved name if present
+			if new_node.node_info.has("name"):
+				new_node.obj_name = new_node.node_info["name"]
 		if node_shape == "Interax":
 			#new_node.distances = node_data.get("distances", [[1.0], [1.0]])
 			new_node.update_labels()
 			interax_node = new_node
 		id_map[node_data["id"]] = new_node
 		next_id += 1
-		circles_container.add_child(new_node)
+		ui_circles_container.add_child(new_node)
 		new_node.circle_selected_for_connection.connect(_on_circle_selected_for_connection)
 		new_node.circle_selected_for_properties.connect(_on_circle_selected_for_properties)
 		if node_shape == "Interax":
@@ -660,8 +740,8 @@ func load_graph(file_path: String):
 			push_error("Conexiune invalidă: nod sursă sau țintă lipsă pentru ", edge_data)
 	
 	# Actualizează conexiunile vizuale
-	if connections != null:
-		connections.update_connections(connections_list)
-		connections.queue_redraw()
+	if ui_connections != null:
+		ui_connections.update_connections(connections_list)
+		ui_connections.queue_redraw()
 	update_scene()
 	print("Graf încărcat din: ", file_path)
