@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://yocxu1a5aut8"]
+
+[ext_resource type="Script" uid="uid://clewittwcvssn" path="res://InsertFromLibrary.gd" id="1_glv2v"]
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_glv2v")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.0426255, 0.999091, 0, -0.999091, 0.0426255, 0, 3.59045, -0.166278)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
