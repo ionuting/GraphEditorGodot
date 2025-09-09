@@ -12,7 +12,11 @@ var tetris_solids: Array[CSGPolygon3D] = []
 var polygon_solid: CSGPolygon3D
 var selected_shape: TetrisShape2D = null
 
-# Properties panel
+# New modular components
+var shape_manager: ShapeManager
+var property_panel: PropertyPanel
+
+# Legacy properties panel variables (replaced by modular PropertyPanel)
 var properties_panel: Control = null
 var width_spinbox: SpinBox = null
 var height_spinbox: SpinBox = null
@@ -49,6 +53,9 @@ func _ready():
 	solid_factory = SolidFactory.new()
 	add_child(solid_factory)
 	
+	# Setup modular components
+	_setup_modular_components()
+	
 	# Setup 3D camera
 	_setup_3d_camera()
 	
@@ -62,8 +69,37 @@ func _ready():
 	# Setup camera transform
 	_update_camera_transform()
 	
-	# Create properties panel
-	_create_properties_panel()
+	# Load existing shapes
+	_load_existing_shapes()
+
+func _setup_modular_components():
+	# Create shape manager
+	shape_manager = ShapeManager.get_instance()
+	
+	# Connect shape manager signals
+	shape_manager.shape_added.connect(_on_shape_added)
+	shape_manager.shape_removed.connect(_on_shape_removed)
+	shape_manager.shape_modified.connect(_on_shape_modified)
+	
+	# Create property panel
+	property_panel = preload("res://ui/PropertyPanel.gd").new()
+	add_child(property_panel)
+	
+	# Connect property panel signals
+	property_panel.property_changed.connect(_on_property_changed)
+	property_panel.panel_closed.connect(_on_property_panel_closed)
+	property_panel.shape_color_change_requested.connect(_on_shape_color_changed)
+	property_panel.shape_delete_requested.connect(_on_shape_delete_requested)
+	property_panel.rebuild_building_requested.connect(_on_rebuild_building_requested)
+	
+	print("✓ Modular components initialized")
+
+func _load_existing_shapes():
+	var loaded_shapes_data = shape_manager.load_shapes()
+	
+	for shape_data in loaded_shapes_data:
+		var shape = shape_manager.create_shape_from_data(shape_data, shape_layer)
+		shape.shape_selected.connect(_on_shape_selected.bind(shape))
 
 func _setup_3d_camera():
 	# Create camera pivot point
@@ -312,6 +348,34 @@ func setup_ui():
 	btn_test_csg.pressed.connect(_on_test_csg_result)
 	main_vbox.add_child(btn_test_csg)
 	
+	var btn_build_complete = Button.new()
+	btn_build_complete.text = "🏗️ Build with Windows & Doors"
+	btn_build_complete.pressed.connect(_on_build_complete_structure)
+	main_vbox.add_child(btn_build_complete)
+	
+	main_vbox.add_child(HSeparator.new())
+	
+	# Shape Management Section
+	var management_label = Label.new()
+	management_label.text = "Shape Management:"
+	management_label.add_theme_font_size_override("font_size", 14)
+	main_vbox.add_child(management_label)
+	
+	var btn_validate_all = Button.new()
+	btn_validate_all.text = "🔍 Validate All Shapes"
+	btn_validate_all.pressed.connect(_on_validate_all_shapes)
+	main_vbox.add_child(btn_validate_all)
+	
+	var btn_show_statistics = Button.new()
+	btn_show_statistics.text = "📊 Show Statistics"
+	btn_show_statistics.pressed.connect(_on_show_statistics)
+	main_vbox.add_child(btn_show_statistics)
+	
+	var btn_export_shapes = Button.new()
+	btn_export_shapes.text = "💾 Export Shapes"
+	btn_export_shapes.pressed.connect(_on_export_shapes)
+	main_vbox.add_child(btn_export_shapes)
+	
 	var btn_clear_all = Button.new()
 	btn_clear_all.text = "Șterge Tot"
 	btn_clear_all.pressed.connect(_on_clear_all)
@@ -351,6 +415,9 @@ func _add_tetris_shape(type: String, pos: Vector2):
 	shape.shape_selected.connect(_on_shape_selected.bind(shape))
 	
 	shape_layer.add_child(shape)
+	
+	# Add to shape manager
+	shape_manager.add_shape(shape)
 
 func _on_shape_selected(shape: TetrisShape2D):
 	# Deselect all other shapes
@@ -358,8 +425,14 @@ func _on_shape_selected(shape: TetrisShape2D):
 		if other_shape != shape and other_shape.has_method("set_selected"):
 			other_shape.set_selected(false)
 	
-	# Show properties panel for selected shape
-	_show_properties_panel(shape)
+	# Set current selected shape and show property panel
+	selected_shape = shape
+	if property_panel:
+		property_panel.set_shape(shape)
+		
+		# Setup realtime validation
+		var AutoValidator = preload("res://ui/AutoValidator.gd")
+		AutoValidator.setup_realtime_validation(shape, property_panel)
 
 func _on_clear_polygon():
 	if polygon_drawer:
@@ -467,8 +540,24 @@ func _on_apply_csg_cut():
 		print("Trebuie să creezi atât solidele tetris cât și solidul poligon!")
 		return
 	
-	# Create a single CSG combiner that subtracts all tetris solids from polygon
-	var csg_result = solid_factory.create_polygon_minus_tetris(polygon_solid, tetris_solids)
+	# Create complete building with windows and doors using new SolidFactory logic
+	var outer_vertices = polygon_drawer.get_offset_polygon()
+	var outer_height = polygon_drawer.extrusion_height
+	var tetris_shapes = _get_all_tetris_shapes()
+	
+	# Validare vertices
+	if outer_vertices.size() < 3:
+		print("⚠️ Poligonul exterior trebuie să aibă cel puțin 3 vertices!")
+		return
+	
+	print("🏗️ Creating complete building with ", tetris_shapes.size(), " rooms")
+	print("🏗️ Outer vertices: ", outer_vertices.size())
+	print("🏗️ Building height: ", outer_height)
+	
+	# Sincronizează proprietățile din PropertyPanel/JSON înapoi în obiectele TetrisShape2D
+	_sync_shape_properties_from_manager(tetris_shapes)
+	
+	var csg_result = solid_factory.create_complete_building_with_windows_doors(outer_vertices, outer_height, tetris_shapes)
 	
 	# Ensure the CSG result is not already in the scene tree
 	if csg_result.get_parent():
@@ -478,7 +567,7 @@ func _on_apply_csg_cut():
 	solid_container.add_child(csg_result)
 	csg_result.position = Vector3.ZERO
 	
-	print("CSG result added to scene at: ", csg_result.position)
+	print("✅ Complete building with windows and doors added to scene at: ", csg_result.position)
 	
 	# Hide original shapes
 	polygon_solid.visible = false
@@ -486,8 +575,93 @@ func _on_apply_csg_cut():
 		tetris_solid.visible = false
 	
 	print("Poligon exterior tăiat de ", tetris_solids.size(), " camere tetris")
+
+func _get_all_tetris_shapes() -> Array:
+	"""
+	Colectează toate shape-urile TetrisShape2D din scenă pentru a le trimite la SolidFactory
+	"""
+	var shapes: Array = []
 	
-	print("Poligon exterior tăiat de ", tetris_solids.size(), " camere tetris")
+	# Caută în copiii direcți ai scenei
+	for child in get_children():
+		if child is TetrisShape2D:
+			shapes.append(child)
+	
+	# Caută și în shape_layer dacă există
+	if shape_layer:
+		for child in shape_layer.get_children():
+			if child is TetrisShape2D:
+				shapes.append(child)
+	
+	print("📊 Found ", shapes.size(), " TetrisShape2D objects in scene")
+	
+	# Debug info pentru fiecare shape
+	for i in range(shapes.size()):
+		var shape = shapes[i]
+		var has_win = shape.has_window and shape.window_height > 0
+		var has_door = shape.has_door and shape.door_height > 0
+		print("  • Shape ", i, ": ", shape.room_name, " | Window: ", has_win, " | Door: ", has_door)
+	
+	return shapes
+
+func _on_build_complete_structure():
+	"""
+	Funcție dedicată pentru testarea noii funcționalități cu ferestre și uși
+	"""
+	if not polygon_solid:
+		print("⚠️ Trebuie să creezi mai întâi solidul poligon!")
+		return
+		
+	var tetris_shapes = _get_all_tetris_shapes()
+	if tetris_shapes.size() == 0:
+		print("⚠️ Trebuie să existe cel puțin o formă Tetris în scenă!")
+		return
+	
+	# Curăță rezultatele anterioare
+	_clear_solid_container()
+	
+	# Creează structura completă cu ferestre și uși
+	var outer_vertices = polygon_drawer.get_offset_polygon()
+	var outer_height = polygon_drawer.extrusion_height
+	
+	# Validare vertices
+	if outer_vertices.size() < 3:
+		print("⚠️ Poligonul exterior trebuie să aibă cel puțin 3 vertices!")
+		return
+	
+	print("🏗️ Building complete structure...")
+	print("   • Outer polygon vertices: ", outer_vertices.size())
+	print("   • Building height: ", outer_height, "m")
+	print("   • Tetris shapes: ", tetris_shapes.size())
+	
+	# Sincronizează proprietățile din PropertyPanel/JSON înapoi în obiectele TetrisShape2D
+	_sync_shape_properties_from_manager(tetris_shapes)
+	
+	var complete_building = solid_factory.create_complete_building_with_windows_doors(
+		outer_vertices, 
+		outer_height, 
+		tetris_shapes
+	)
+	
+	if complete_building:
+		solid_container.add_child(complete_building)
+		complete_building.position = Vector3.ZERO
+		
+		# Ascunde shape-urile originale pentru claritate
+		if polygon_solid:
+			polygon_solid.visible = false
+		for tetris_solid in tetris_solids:
+			tetris_solid.visible = false
+		
+		print("✅ Complete building created successfully!")
+		print("🎯 Switch to 3D view to see windows and doors!")
+	else:
+		print("❌ Failed to create complete building")
+
+func _clear_solid_container():
+	"""Helper pentru curățarea containerului de solide"""
+	for child in solid_container.get_children():
+		child.queue_free()
 
 func _on_test_csg_result():
 	var csg_nodes = solid_container.get_children().filter(func(node): return node is CSGCombiner3D)
@@ -507,7 +681,10 @@ func _on_test_csg_result():
 				print("    Child ", j, " (CSGMesh3D): operation=", child.operation, " pos=", child.global_position)
 
 func _on_clear_all():
-	# Clear all shapes
+	# Clear all shapes using shape manager
+	shape_manager.clear_all_shapes()
+	
+	# Clear shapes from scene
 	for child in shape_layer.get_children():
 		child.queue_free()
 	
@@ -523,46 +700,32 @@ func _on_clear_all():
 	
 	tetris_solids.clear()
 	polygon_solid = null
+	selected_shape = null
+	
+	# Hide property panel
+	if property_panel:
+		property_panel.set_shape(null)
 
+# Legacy functions - replaced by PropertyPanel module
 func _on_width_changed(value: float):
-	if selected_shape:
-		var current_size = selected_shape.get_current_dimensions()
-		selected_shape.set_dimensions(Vector2(value, current_size.y))
+	# Handled by PropertyPanel
+	pass
 
 func _on_height_changed(value: float):
-	if selected_shape:
-		var current_size = selected_shape.get_current_dimensions()
-		selected_shape.set_dimensions(Vector2(current_size.x, value))
+	# Handled by PropertyPanel
+	pass
 
 func _on_extrusion_changed(value: float):
-	if selected_shape:
-		selected_shape.extrusion_height = value
-		print("Extrusion height changed to: ", value)
+	# Handled by PropertyPanel
+	pass
 
 func _on_close_properties():
-	if properties_panel:
-		properties_panel.visible = false
-	properties_visible = false
-	selected_shape = null
+	# Handled by PropertyPanel
+	pass
 
 func _show_properties_panel(shape: TetrisShape2D):
-	if not properties_panel:
-		return
-		
-	selected_shape = shape
-	var dimensions = shape.get_current_dimensions()
-	
-	# Update spinbox values
-	if width_spinbox:
-		width_spinbox.value = dimensions.x
-	if height_spinbox:
-		height_spinbox.value = dimensions.y
-	if extrusion_spinbox:
-		extrusion_spinbox.value = shape.extrusion_height
-	
-	# Show panel
-	properties_panel.visible = true
-	properties_visible = true
+	# Handled by PropertyPanel
+	pass
 
 func _on_reset_view():
 	if is_3d_view_mode:
@@ -577,92 +740,142 @@ func _on_reset_view():
 		zoom_level = 1.0
 		_update_camera_transform()
 
+# Shape Manager Signal Handlers
+func _on_shape_added(shape: TetrisShape2D):
+	print("✓ Shape added: ", shape.unique_id)
+
+func _on_shape_removed(shape: TetrisShape2D):
+	print("✓ Shape removed: ", shape.unique_id)
+	if selected_shape == shape:
+		selected_shape = null
+		if property_panel:
+			property_panel.set_shape(null)
+
+func _on_shape_modified(shape: TetrisShape2D):
+	print("✓ Shape modified: ", shape.unique_id)
+
+# Property Panel Signal Handlers
+func _on_property_changed(property_name: String, value):
+	print("Property changed: %s = %s" % [property_name, str(value)])
+	
+	# Apply the property change to the currently selected shape
+	if selected_shape:
+		# Update the shape property
+		match property_name:
+			"width":
+				var current_dim = selected_shape.get_current_dimensions()
+				selected_shape.set_dimensions(Vector2(value, current_dim.y))
+			"height":
+				var current_dim = selected_shape.get_current_dimensions()
+				selected_shape.set_dimensions(Vector2(current_dim.x, value))
+			"extrusion_height":
+				selected_shape.extrusion_height = value
+			"interior_offset":
+				selected_shape.interior_offset = value
+			"room_name":
+				selected_shape.room_name = value
+			"central_color":
+				selected_shape.central_color = value
+			"has_window":
+				selected_shape.has_window = value
+			"window_style":
+				selected_shape.window_style = value
+			"window_side":
+				selected_shape.window_side = value
+			"window_offset":
+				selected_shape.window_offset = value
+			"window_n_offset":
+				selected_shape.window_n_offset = value
+			"window_z_offset":
+				selected_shape.window_z_offset = value
+			"window_width":
+				selected_shape.window_width = value
+			"window_length":
+				selected_shape.window_length = value
+			"window_height":
+				selected_shape.window_height = value
+			"window_sill":
+				selected_shape.window_sill = value
+			"has_door":
+				selected_shape.has_door = value
+			"door_style":
+				selected_shape.door_style = value
+			"door_side":
+				selected_shape.door_side = value
+			"door_offset":
+				selected_shape.door_offset = value
+			"door_n_offset":
+				selected_shape.door_n_offset = value
+			"door_z_offset":
+				selected_shape.door_z_offset = value
+			"door_width":
+				selected_shape.door_width = value
+			"door_length":
+				selected_shape.door_length = value
+			"door_height":
+				selected_shape.door_height = value
+			"door_sill":
+				selected_shape.door_sill = value
+		
+		# Mark the shape as modified and trigger the signal
+		# This will update the ShapeManager with the new properties
+		selected_shape.shape_changed.emit()
+		
+		print("✅ Applied property change to shape ", selected_shape.unique_id)
+
+func _on_property_panel_closed():
+	if selected_shape:
+		selected_shape.set_selected(false)
+	selected_shape = null
+
+# New Management Functions
+func _on_validate_all_shapes():
+	var AutoValidator = preload("res://ui/AutoValidator.gd")
+	var results = AutoValidator.validate_all_shapes_in_manager(shape_manager)
+	
+	print("\n=== VALIDATION RESULTS ===")
+	print("Total shapes: ", results.total_validated)
+	print("Valid shapes: ", results.valid_shapes)
+	print("Invalid shapes: ", results.invalid_shapes)
+	print("Total warnings: ", results.total_warnings)
+	print("Total errors: ", results.total_errors)
+	
+	if results.invalid_shapes > 0:
+		print("\nShapes with errors:")
+		for shape_id in results.shape_results:
+			var result = results.shape_results[shape_id]
+			if not result.is_valid:
+				print("  - %s: %s" % [shape_id, str(result.errors)])
+
+func _on_show_statistics():
+	var stats = shape_manager.get_shapes_statistics()
+	var geometry = shape_manager.get_geometry_summary()
+	
+	print("\n=== SHAPE STATISTICS ===")
+	print("Total shapes: ", stats.total_count)
+	print("Shapes by type: ", stats.by_type)
+	print("Shapes with windows: ", stats.with_windows)
+	print("Shapes with doors: ", stats.with_doors)
+	print("Total area: %.2f" % stats.total_area)
+	print("Average area: %.2f" % stats.average_area)
+	print("\n=== GEOMETRY SUMMARY ===")
+	print("Total interior area: %.2f" % geometry.total_area)
+	print("Total perimeter: %.2f" % geometry.total_perimeter)
+	print("Total window area: %.2f" % geometry.total_window_area)
+	print("Total door area: %.2f" % geometry.total_door_area)
+
+func _on_export_shapes():
+	var timestamp = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
+	var export_path = "user://shapes_export_%s.json" % timestamp
+	
+	if shape_manager.export_shapes_to_json(export_path):
+		print("✓ Shapes exported to: ", export_path)
+	else:
+		print("✗ Failed to export shapes")
+
 func _create_properties_panel():
-	# Create properties panel (hidden by default)
-	properties_panel = Control.new()
-	properties_panel.position = Vector2(320, 0)  # La dreapta UI-ului principal
-	properties_panel.size = Vector2(240, 180)  # Mărită pentru noul control
-	properties_panel.visible = false
-	# Add to UI control for fixed position (not affected by camera zoom/pan)
-	ui_control.add_child(properties_panel)
-	
-	# Background panel
-	var panel = Panel.new()
-	panel.size = properties_panel.size
-	properties_panel.add_child(panel)
-	
-	# VBox for layout
-	var vbox = VBoxContainer.new()
-	vbox.position = Vector2(10, 10)
-	vbox.size = Vector2(220, 160)  # Mărită pentru noul control
-	properties_panel.add_child(vbox)
-	
-	# Title
-	var title_label = Label.new()
-	title_label.text = "Proprietăți Formă"
-	title_label.add_theme_font_size_override("font_size", 14)
-	vbox.add_child(title_label)
-	
-	vbox.add_child(HSeparator.new())
-	
-	# Width control
-	var width_hbox = HBoxContainer.new()
-	vbox.add_child(width_hbox)
-	
-	var width_label = Label.new()
-	width_label.text = "Lățime:"
-	width_label.custom_minimum_size.x = 60
-	width_hbox.add_child(width_label)
-	
-	width_spinbox = SpinBox.new()
-	width_spinbox.min_value = 10
-	width_spinbox.max_value = 500
-	width_spinbox.step = 5
-	width_spinbox.value = 100
-	width_spinbox.value_changed.connect(_on_width_changed)
-	width_hbox.add_child(width_spinbox)
-	
-	# Height control
-	var height_hbox = HBoxContainer.new()
-	vbox.add_child(height_hbox)
-	
-	var height_label = Label.new()
-	height_label.text = "Înălțime:"
-	height_label.custom_minimum_size.x = 60
-	height_hbox.add_child(height_label)
-	
-	height_spinbox = SpinBox.new()
-	height_spinbox.min_value = 10
-	height_spinbox.max_value = 500
-	height_spinbox.step = 5
-	height_spinbox.value = 100
-	height_spinbox.value_changed.connect(_on_height_changed)
-	height_hbox.add_child(height_spinbox)
-	
-	# Extrusion Height control
-	var extrusion_hbox = HBoxContainer.new()
-	vbox.add_child(extrusion_hbox)
-	
-	var extrusion_label = Label.new()
-	extrusion_label.text = "Extruzie:"
-	extrusion_label.custom_minimum_size.x = 60
-	extrusion_hbox.add_child(extrusion_label)
-	
-	extrusion_spinbox = SpinBox.new()
-	extrusion_spinbox.min_value = 1.0
-	extrusion_spinbox.max_value = 1000.0
-	extrusion_spinbox.step = 1.0
-	extrusion_spinbox.value = 255
-	extrusion_spinbox.value_changed.connect(_on_extrusion_changed)
-	extrusion_hbox.add_child(extrusion_spinbox)
-	
-	vbox.add_child(HSeparator.new())
-	
-	# Close button
-	var close_button = Button.new()
-	close_button.text = "Închide"
-	close_button.pressed.connect(_on_close_properties)
-	vbox.add_child(close_button)
+	# Legacy function - now handled by modular PropertyPanel
+	pass
 
 # Function to list all 3D objects in the scene after operations
 func list_3d_objects_in_scene():
@@ -670,3 +883,115 @@ func list_3d_objects_in_scene():
 	for child in get_tree().get_current_scene().get_children():
 		if child is MeshInstance3D or child is CSGMesh3D:
 			print("Object: ", child.name, ", Type: ", child.get_class(), ", Position: ", child.global_transform.origin)
+
+func _on_shape_color_changed(shape: TetrisShape2D):
+	"""Handle shape color change requests from PropertyPanel"""
+	if shape and shape == selected_shape:
+		print("✓ Shape color changed: ", shape.room_name, " -> ", shape.central_color)
+		
+		# Update the shape visually if needed
+		shape.queue_redraw()
+		
+		# Save changes through ShapeManager
+		if shape_manager:
+			shape_manager.save_shapes()
+			print("✓ Shape color changes saved")
+
+func _on_shape_delete_requested(shape: TetrisShape2D):
+	"""Handle shape deletion requests from PropertyPanel"""
+	if shape:
+		print("🗑️ Deleting shape: ", shape.room_name if shape.room_name else "Unnamed")
+		
+		# Remove from ShapeManager
+		if shape_manager:
+			shape_manager.remove_shape(shape)
+			shape_manager.save_shapes()
+		
+		# Remove from scene
+		if shape.get_parent():
+			shape.get_parent().remove_child(shape)
+		shape.queue_free()
+		
+		# Clear selection
+		if shape == selected_shape:
+			selected_shape = null
+			_deselect_all_shapes()
+		
+		print("✓ Shape deleted successfully")
+
+# ========================================
+# CSG PRIORITY SYSTEM SUPPORT
+# ========================================
+
+# Getter pentru SolidFactory (folosit de PropertyPanel)
+func get_solid_factory() -> SolidFactory:
+	"""Returnează instanța SolidFactory pentru acces extern"""
+	return solid_factory
+
+# Handler pentru rebuild cu priorități
+func _on_rebuild_building_requested():
+	"""Reconstruiește clădirea folosind sistemul de priorități CSG"""
+	print("🔧 Rebuilding complete structure with current CSG priorities...")
+	
+	# Afișează prioritățile curente
+	if solid_factory:
+		solid_factory.print_priority_order()
+	
+	# Reconstruiește structura completă
+	_on_build_complete_structure()
+	
+	print("✅ Building rebuilt with priority system")
+
+# Test CSG functionality
+func _test_csg_functionality():
+	"""Testează funcționalitatea CSG cu un exemplu simplu"""
+	print("🧪 Testing CSG functionality...")
+	
+	if solid_factory:
+		var test_csg = solid_factory.create_simple_csg_test()
+		if test_csg:
+			solid_container.add_child(test_csg)
+			test_csg.position = Vector3(500, 0, 0)  # Pozitionează separat
+			print("✅ CSG test added to scene at position: ", test_csg.position)
+		else:
+			print("❌ Failed to create CSG test")
+
+func _sync_shape_properties_from_manager(tetris_shapes: Array):
+	"""
+	Sincronizează proprietățile din ShapeManager/PropertyPanel înapoi în obiectele TetrisShape2D
+	înainte de a le trimite la SolidFactory pentru generarea 3D
+	"""
+	var shape_manager = ShapeManager.get_instance()
+	
+	print("🔄 SYNC: Starting shape properties synchronization for ", tetris_shapes.size(), " shapes...")
+	print("🔄 SYNC: ShapeManager has ", shape_manager.shape_properties.size(), " saved properties")
+	
+	for shape in tetris_shapes:
+		if shape is TetrisShape2D:
+			var shape_id = shape.unique_id
+			if shape_manager.shape_properties.has(shape_id):
+				var saved_properties = shape_manager.shape_properties[shape_id]
+				print("🔄 SYNC: Syncing properties for shape ", shape_id)
+				
+				# Debug: valorile ÎNAINTE de sincronizare
+				print("  📥 BEFORE sync:")
+				print("    - window_offset: ", shape.window_offset, " -> ", saved_properties.get("window_offset", "N/A"))
+				print("    - door_offset: ", shape.door_offset, " -> ", saved_properties.get("door_offset", "N/A"))
+				print("    - window_side: ", shape.window_side, " -> ", saved_properties.get("window_side", "N/A"))
+				print("    - door_side: ", shape.door_side, " -> ", saved_properties.get("door_side", "N/A"))
+				
+				# Aplicăm proprietățile salvate înapoi în obiect folosind from_dict
+				shape.from_dict(saved_properties)
+				
+				# Debug: valorile DUPĂ sincronizare
+				print("  📤 AFTER sync:")
+				print("    - window_offset: ", shape.window_offset)
+				print("    - door_offset: ", shape.door_offset)
+				print("    - window_side: ", shape.window_side)
+				print("    - door_side: ", shape.door_side)
+				print("    - window_height: ", shape.window_height)
+				print("    - door_height: ", shape.door_height)
+			else:
+				print("⚠️ No saved properties found for shape ", shape_id)
+	
+	print("✅ Shape properties sync completed")

@@ -177,5 +177,5 @@ func get_offset_polygon_world() -> Array[Vector2]:
 		world_points.append(global_transform * point)
 	return world_points
 
-func get_offset_polygon() -> Array:
+func get_offset_polygon() -> Array[Vector2]:
 	return offset_points
