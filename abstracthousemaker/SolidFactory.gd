@@ -227,8 +227,8 @@ func _create_material_for_type(shape_type: String) -> StandardMaterial3D:
 			material.roughness = 0.7
 			material.flags_transparent = false
 		"camera_volume":
-			# Camerele - transparente 50% pentru vizualizare
-			material.albedo_color = Color(0.3, 0.5, 1.0, 0.5)  # Albastru transparent
+			# Camerele - transparente cu albastru cian pentru vizualizare
+			material.albedo_color = Color(0.0, 1.0, 1.0, 0.3)  # Albastru cian transparent
 			material.flags_transparent = true
 			material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 			material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
@@ -665,9 +665,9 @@ func create_window_solid(tetris_shape: TetrisShape2D) -> CSGPolygon3D:
 	var z_position = tetris_shape.window_sill + (tetris_shape.window_height * 0.5)
 	window_solid.position = Vector3(0, 0, z_position)
 	
-	# Material transparent pentru fereastră (sticlă)
+	# Material transparent pentru fereastră (sticlă) - albastru cian cu 50% transparență
 	var glass_material = StandardMaterial3D.new()
-	glass_material.albedo_color = Color(0.7, 0.9, 1.0, 0.3)  # Albastru transparent
+	glass_material.albedo_color = Color(0.0, 1.0, 1.0, 0.5)  # Albastru cian cu 50% transparență
 	glass_material.flags_transparent = true
 	glass_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	glass_material.metallic = 0.1
@@ -716,21 +716,13 @@ func create_door_solid(tetris_shape: TetrisShape2D) -> CSGPolygon3D:
 	var z_position = tetris_shape.door_sill + (tetris_shape.door_height * 0.5)
 	door_solid.position = Vector3(0, 0, z_position)
 	
-	# Material pentru ușă (lemn/metal)
+	# Material pentru ușă - albastru cian cu 50% transparență
 	var door_material = StandardMaterial3D.new()
-	match tetris_shape.door_style:
-		"standard":
-			door_material.albedo_color = Color(0.6, 0.4, 0.2, 1.0)  # Maro lemn
-		"sliding":
-			door_material.albedo_color = Color(0.8, 0.8, 0.9, 1.0)  # Gri metalic
-		"casement":
-			door_material.albedo_color = Color(0.7, 0.5, 0.3, 1.0)  # Lemn deschis
-		_:
-			door_material.albedo_color = Color(0.5, 0.5, 0.5, 1.0)  # Gri default
-	
+	door_material.albedo_color = Color(0.0, 1.0, 1.0, 0.5)  # Albastru cian cu 50% transparență
+	door_material.flags_transparent = true
+	door_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	door_material.metallic = 0.2
-	door_material.roughness = 0.7
-	door_material.flags_transparent = false
+	door_material.roughness = 0.3  # Mai puțin rugos pentru aspect modern
 	door_solid.material_override = door_material
 	
 	door_solid.name = "Door_" + (tetris_shape.room_name if tetris_shape.room_name else "Unknown")
@@ -985,9 +977,9 @@ func create_walls_with_windows_doors(outer_vertices: Array[Vector2], height: flo
 func create_transparent_rooms(room_solids: Array[MeshInstance3D]) -> Node3D:
 	var rooms_container = Node3D.new()
 	
-	# Material transparent pentru camere
+	# Material transparent pentru camere - albastru cian cu transparență
 	var room_material = StandardMaterial3D.new()
-	room_material.albedo_color = Color(0.3, 0.5, 1.0, 0.5)  # Albastru transparent 50%
+	room_material.albedo_color = Color(0.0, 1.0, 1.0, 0.3)  # Albastru cian cu 30% transparență (mai subtil)
 	room_material.flags_transparent = true
 	room_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	room_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
@@ -1233,9 +1225,9 @@ func create_transparent_rooms_from_shapes(tetris_shapes: Array, height: float) -
 	"""
 	var rooms_container = Node3D.new()
 	
-	# Material transparent pentru camere
+	# Material transparent pentru camere - albastru cian cu transparență
 	var room_material = StandardMaterial3D.new()
-	room_material.albedo_color = Color(0.3, 0.5, 1.0, 0.3)  # Albastru transparent 30%
+	room_material.albedo_color = Color(0.0, 1.0, 1.0, 0.2)  # Albastru cian cu 20% transparență (foarte subtil)
 	room_material.flags_transparent = true
 	room_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	room_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY

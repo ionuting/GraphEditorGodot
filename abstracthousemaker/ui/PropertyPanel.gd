@@ -11,6 +11,17 @@ signal rebuild_building_requested
 var current_shape: TetrisShape2D = null
 var is_updating_ui: bool = false
 
+# Dragging system variables
+var is_dragging: bool = false
+var drag_start_position: Vector2
+var drag_offset: Vector2
+var drag_header: Control
+
+# Panel state
+var is_minimized: bool = false
+var normal_size: Vector2 = Vector2(320, 600)
+var minimized_size: Vector2 = Vector2(320, 35)
+
 # Referințe către controalele UI
 var ui_room_name: LineEdit
 var ui_central_color: ColorPickerButton
@@ -49,71 +60,380 @@ var validation_display: RichTextLabel
 
 func _ready():
 	_setup_panel_style()
+	_setup_black_theme()
 	_create_ui()
+	_load_panel_settings()
+
+func _load_panel_settings():
+	# Load saved position if available
+	if FileAccess.file_exists("user://property_panel_settings.json"):
+		var file = FileAccess.open("user://property_panel_settings.json", FileAccess.READ)
+		if file:
+			var json = JSON.new()
+			var parse_result = json.parse(file.get_as_text())
+			file.close()
+			
+			if parse_result == OK:
+				var settings = json.data
+				if settings.has("position"):
+					position = Vector2(settings.position.x, settings.position.y)
+				if settings.has("is_minimized"):
+					# Apply minimized state after UI is created
+					call_deferred("_apply_minimized_state", settings.is_minimized)
+				print("🔄 Property panel settings loaded")
+
+func _save_panel_settings():
+	var settings = {
+		"position": {"x": position.x, "y": position.y},
+		"is_minimized": is_minimized
+	}
+	
+	var file = FileAccess.open("user://property_panel_settings.json", FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(settings))
+		file.close()
+		print("💾 Property panel settings saved")
 
 func _setup_panel_style():
-	# Setup panel appearance - fixed to right side regardless of screen resize
-	set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
-	size = Vector2(320, 0)  # Width fixed, height will stretch
-	position = Vector2(-330, 10)
-	set_offsets_preset(Control.PRESET_RIGHT_WIDE, Control.PRESET_MODE_KEEP_SIZE, 10)
+	# Setup panel appearance - DRAGGABLE OPAQUE BLACK OVERLAY
+	size = Vector2(320, 600)  # Fixed size
+	# Position will be set after viewport is ready or loaded from settings
+	call_deferred("_set_initial_position")
 	custom_minimum_size = Vector2(320, 600)
+	set_h_size_flags(Control.SIZE_SHRINK_CENTER)  # Don't expand horizontally
+	set_v_size_flags(Control.SIZE_SHRINK_CENTER)  # Don't expand vertically
+	mouse_filter = Control.MOUSE_FILTER_STOP  # Accept mouse events for dragging
 	visible = false
+	z_index = 100  # High z-index for overlay
 	
-	# Background style
+	# Enable dragging
+	_setup_dragging_system()
+
+func _set_initial_position():
+	# Set default position at top-right if no saved position
+	if position == Vector2.ZERO:
+		var viewport_size = get_viewport().size
+		position = Vector2(viewport_size.x - 330, 10)
+
+func _setup_dragging_system():
+	# The drag header will be created in _create_draggable_header()
+	# This function sets up the main panel for input handling
+	gui_input.connect(_on_panel_input)
+
+func _on_panel_input(event: InputEvent):
+	# Only handle dragging in header area (top 35 pixels)
+	var local_mouse_pos = get_local_mouse_position()
+	var is_in_header = local_mouse_pos.y >= 0 and local_mouse_pos.y <= 35
+	
+	if event is InputEventMouseButton:
+		print("🖱️ Mouse event in panel - in header: ", is_in_header, " pos: ", local_mouse_pos)
+		if is_in_header:
+			var mouse_event = event as InputEventMouseButton
+			if mouse_event.button_index == MOUSE_BUTTON_LEFT:
+				if mouse_event.pressed:
+					# Start dragging
+					is_dragging = true
+					drag_start_position = global_position
+					drag_offset = get_global_mouse_position() - global_position
+					print("🖱️ Started dragging property panel")
+				else:
+					# Stop dragging
+					is_dragging = false
+					_save_panel_settings()  # Save position when dragging stops
+					print("🖱️ Stopped dragging property panel")
+	
+	elif event is InputEventMouseMotion and is_dragging:
+		# Update position while dragging
+		var new_position = get_global_mouse_position() - drag_offset
+		
+		# Constrain to viewport bounds
+		var viewport_size = get_viewport().size
+		new_position.x = clamp(new_position.x, 0, viewport_size.x - size.x)
+		new_position.y = clamp(new_position.y, 0, viewport_size.y - size.y)
+		
+		global_position = new_position
+
+func _create_draggable_header():
+	# Visual header background
+	var header_bg = Panel.new()
+	header_bg.size = Vector2(320, 35)
+	header_bg.position = Vector2(0, 0)
+	header_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE  # Let events pass through
+	
+	# Header style - darker than main panel
+	var header_style = StyleBoxFlat.new()
+	header_style.bg_color = Color(0.1, 0.1, 0.1, 1.0)  # Darker gray
+	header_style.set_border_width_all(1)
+	header_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+	header_style.set_corner_radius_all(8)
+	header_bg.add_theme_stylebox_override("panel", header_style)
+	add_child(header_bg)
+	
+	# Title in header
+	var title = Label.new()
+	title.text = "🏠 Shape Properties [Drag to move]"
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title.position = Vector2(5, 0)
+	title.size = Vector2(270, 35)  # Leave space for minimize button
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE  # Let events pass through
+	add_child(title)
+	
+	# Minimize/Maximize button
+	var minimize_btn = Button.new()
+	minimize_btn.text = "−"  # Minus sign
+	minimize_btn.size = Vector2(30, 25)
+	minimize_btn.position = Vector2(285, 5)
+	minimize_btn.add_theme_font_size_override("font_size", 16)
+	minimize_btn.add_theme_color_override("font_color", Color.WHITE)
+	minimize_btn.pressed.connect(_on_minimize_pressed)
+	minimize_btn.mouse_filter = Control.MOUSE_FILTER_STOP  # Button should capture clicks
+	_apply_control_theme(minimize_btn)
+	add_child(minimize_btn)
+
+func _on_minimize_pressed():
+	print("🔘 Minimize button pressed - current state: ", is_minimized)
+	is_minimized = !is_minimized
+	
+	if is_minimized:
+		# Minimize - show only header
+		size = minimized_size
+		# Hide scroll container
+		for child in get_children():
+			if child is ScrollContainer:
+				child.visible = false
+		print("📦 Property panel minimized")
+	else:
+		# Maximize - show full panel
+		size = normal_size
+		# Show scroll container
+		for child in get_children():
+			if child is ScrollContainer:
+				child.visible = true
+				# Adjust scroll container size to new panel size
+				child.size = Vector2(320, size.y - 35)
+		print("📋 Property panel maximized")
+	
+	# Update minimize button text - find it more specifically
+	for child in get_children():
+		if child is Button and child.position.x > 280:  # Minimize button is positioned at x=285
+			child.text = "□" if is_minimized else "−"
+			break
+	
+	# Save settings
+	_save_panel_settings()
+
+func _apply_minimized_state(should_minimize: bool):
+	if should_minimize != is_minimized:
+		_on_minimize_pressed()
+
+	# OPAQUE BLACK background style
 	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.15, 0.15, 0.15, 0.95)
+	style.bg_color = Color(0.0, 0.0, 0.0, 1.0)  # Pure black, fully opaque
 	style.set_border_width_all(2)
-	style.border_color = Color(0.3, 0.3, 0.3)
+	style.border_color = Color(0.2, 0.2, 0.2, 1.0)  # Dark gray border
 	style.set_corner_radius_all(8)
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.5)  # Black shadow
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(2, 2)
 	add_theme_stylebox_override("panel", style)
 
+func _setup_black_theme():
+	"""
+	Configurare temă pentru fundal negru - text alb și controale vizibile
+	"""
+	# Text color - white on black
+	add_theme_color_override("font_color", Color.WHITE)
+	
+	# Labels
+	add_theme_color_override("font_color", Color.WHITE)
+	
+	# LineEdit style
+	var lineedit_style = StyleBoxFlat.new()
+	lineedit_style.bg_color = Color(0.1, 0.1, 0.1, 1.0)  # Very dark gray
+	lineedit_style.border_color = Color(0.3, 0.3, 0.3, 1.0)
+	lineedit_style.set_border_width_all(1)
+	lineedit_style.set_corner_radius_all(4)
+	add_theme_stylebox_override("normal", lineedit_style)
+	
+	# Button style
+	var button_style = StyleBoxFlat.new()
+	button_style.bg_color = Color(0.2, 0.2, 0.2, 1.0)  # Dark gray
+	button_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+	button_style.set_border_width_all(1)
+	button_style.set_corner_radius_all(4)
+	add_theme_stylebox_override("normal", button_style)
+	
+	var button_hover_style = StyleBoxFlat.new()
+	button_hover_style.bg_color = Color(0.3, 0.3, 0.3, 1.0)  # Lighter on hover
+	button_hover_style.border_color = Color(0.5, 0.5, 0.5, 1.0)
+	button_hover_style.set_border_width_all(1)
+	button_hover_style.set_corner_radius_all(4)
+	add_theme_stylebox_override("hover", button_hover_style)
+	
+	print("🎨 Black theme configured for PropertyPanel")
+
+# Helper function to create foldable sections
+func _create_foldable_section(parent: VBoxContainer, title_text: String, is_expanded: bool = true) -> VBoxContainer:
+	var section_vbox = VBoxContainer.new()
+	parent.add_child(section_vbox)
+	
+	# Header button for folding/unfolding
+	var header_button = Button.new()
+	header_button.text = ("▼ " if is_expanded else "▶ ") + title_text
+	header_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	header_button.add_theme_font_size_override("font_size", 14)
+	header_button.add_theme_color_override("font_color", Color.WHITE)
+	
+	# Header button style
+	var header_style = StyleBoxFlat.new()
+	header_style.bg_color = Color(0.15, 0.15, 0.15, 1.0)  # Darker gray
+	header_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+	header_style.set_border_width_all(1)
+	header_style.set_corner_radius_all(4)
+	header_button.add_theme_stylebox_override("normal", header_style)
+	
+	var header_hover_style = StyleBoxFlat.new()
+	header_hover_style.bg_color = Color(0.25, 0.25, 0.25, 1.0)  # Lighter on hover
+	header_hover_style.border_color = Color(0.5, 0.5, 0.5, 1.0)
+	header_hover_style.set_border_width_all(1)
+	header_hover_style.set_corner_radius_all(4)
+	header_button.add_theme_stylebox_override("hover", header_hover_style)
+	
+	section_vbox.add_child(header_button)
+	
+	# Content container
+	var content_container = VBoxContainer.new()
+	content_container.visible = is_expanded
+	section_vbox.add_child(content_container)
+	
+	# Connect fold/unfold functionality
+	header_button.pressed.connect(func():
+		content_container.visible = !content_container.visible
+		header_button.text = ("▼ " if content_container.visible else "▶ ") + title_text
+	)
+	
+	return content_container
+
 func _create_ui():
-	# Main scroll container
+	# Create draggable header with title
+	_create_draggable_header()
+	
+	# Main scroll container (below header)
 	var scroll = ScrollContainer.new()
-	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scroll.set_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 10)
+	scroll.position = Vector2(0, 35)  # Below header
+	scroll.size = Vector2(320, 565)  # Remaining height (600 - 35)
+	scroll.mouse_filter = Control.MOUSE_FILTER_PASS  # Allow scrolling
 	add_child(scroll)
 	
 	var main_vbox = VBoxContainer.new()
 	main_vbox.set_h_size_flags(Control.SIZE_EXPAND_FILL)
 	scroll.add_child(main_vbox)
 	
-	# Title
-	var title = Label.new()
-	title.text = "Shape Properties"
-	title.add_theme_font_size_override("font_size", 16)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	main_vbox.add_child(title)
+	var title_separator = HSeparator.new()
+	_apply_separator_theme(title_separator)
+	main_vbox.add_child(title_separator)
 	
-	main_vbox.add_child(HSeparator.new())
+	# Basic properties (expanded by default)
+	var basic_section = _create_foldable_section(main_vbox, "🏠 Basic Properties", true)
+	_create_basic_properties(basic_section)
 	
-	# Basic properties
-	_create_basic_properties(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# Window properties (collapsed by default)
+	var window_section = _create_foldable_section(main_vbox, "🪟 Window Properties", false)
+	_create_window_properties(window_section)
 	
-	# Window properties
-	_create_window_properties(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# Door properties (collapsed by default)
+	var door_section = _create_foldable_section(main_vbox, "🚪 Door Properties", false)
+	_create_door_properties(door_section)
 	
-	# Door properties
-	_create_door_properties(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# Geometry display (collapsed by default)
+	var geometry_section = _create_foldable_section(main_vbox, "📐 Geometry Info", false)
+	_create_geometry_display(geometry_section)
 	
-	# Geometry display
-	_create_geometry_display(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# Validation display (expanded for important info)
+	var validation_section = _create_foldable_section(main_vbox, "✓ Validation", true)
+	_create_validation_display(validation_section)
 	
-	# Validation display
-	_create_validation_display(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# CSG Priority control (collapsed - advanced)
+	var csg_section = _create_foldable_section(main_vbox, "⚙️ Advanced CSG", false)
+	_create_csg_priority_control(csg_section)
 	
-	# CSG Priority control (advanced)
-	_create_csg_priority_control(main_vbox)
-	main_vbox.add_child(HSeparator.new())
+	# Action buttons (always visible)
+	var actions_section = _create_foldable_section(main_vbox, "🔧 Actions", true)
+	_create_action_buttons(actions_section)
+
+# Helper to apply separator theme
+func _apply_separator_theme(separator: HSeparator):
+	var separator_style = StyleBoxFlat.new()
+	separator_style.bg_color = Color(0.3, 0.3, 0.3, 1.0)  # Gray line
+	separator.add_theme_stylebox_override("separator", separator_style)
+
+# Apply black theme to individual controls
+func _apply_control_theme(control: Control):
+	# Apply white text color to all controls
+	control.add_theme_color_override("font_color", Color.WHITE)
 	
-	# Action buttons
-	_create_action_buttons(main_vbox)
+	if control is Label:
+		control.add_theme_color_override("font_color", Color.WHITE)
+	elif control is LineEdit:
+		var lineedit_style = StyleBoxFlat.new()
+		lineedit_style.bg_color = Color(0.1, 0.1, 0.1, 1.0)
+		lineedit_style.border_color = Color(0.3, 0.3, 0.3, 1.0)
+		lineedit_style.set_border_width_all(1)
+		lineedit_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("normal", lineedit_style)
+		control.add_theme_color_override("font_color", Color.WHITE)
+	elif control is SpinBox:
+		var spinbox_style = StyleBoxFlat.new()
+		spinbox_style.bg_color = Color(0.15, 0.15, 0.15, 1.0)
+		spinbox_style.border_color = Color(0.3, 0.3, 0.3, 1.0)
+		spinbox_style.set_border_width_all(1)
+		spinbox_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("normal", spinbox_style)
+		control.add_theme_color_override("font_color", Color.WHITE)
+	elif control is CheckBox:
+		control.add_theme_color_override("font_color", Color.WHITE)
+		var checkbox_style = StyleBoxFlat.new()
+		checkbox_style.bg_color = Color(0.15, 0.15, 0.15, 1.0)
+		checkbox_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+		checkbox_style.set_border_width_all(1)
+		checkbox_style.set_corner_radius_all(2)
+		control.add_theme_stylebox_override("normal", checkbox_style)
+	elif control is OptionButton:
+		var option_style = StyleBoxFlat.new()
+		option_style.bg_color = Color(0.15, 0.15, 0.15, 1.0)
+		option_style.border_color = Color(0.3, 0.3, 0.3, 1.0)
+		option_style.set_border_width_all(1)
+		option_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("normal", option_style)
+		control.add_theme_color_override("font_color", Color.WHITE)
+	elif control is Button:
+		var button_style = StyleBoxFlat.new()
+		button_style.bg_color = Color(0.3, 0.3, 0.3, 1.0)
+		button_style.border_color = Color(0.4, 0.4, 0.4, 1.0)
+		button_style.set_border_width_all(1)
+		button_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("normal", button_style)
+		
+		var button_hover_style = StyleBoxFlat.new()
+		button_hover_style.bg_color = Color(0.4, 0.4, 0.4, 1.0)
+		button_hover_style.border_color = Color(0.5, 0.5, 0.5, 1.0)
+		button_hover_style.set_border_width_all(1)
+		button_hover_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("hover", button_hover_style)
+		
+		control.add_theme_color_override("font_color", Color.WHITE)
+	elif control is RichTextLabel:
+		var rtl_style = StyleBoxFlat.new()
+		rtl_style.bg_color = Color(0.05, 0.05, 0.05, 1.0)
+		rtl_style.border_color = Color(0.2, 0.2, 0.2, 1.0)
+		rtl_style.set_border_width_all(1)
+		rtl_style.set_corner_radius_all(4)
+		control.add_theme_stylebox_override("normal", rtl_style)
+		control.add_theme_color_override("default_color", Color.WHITE)
+		control.add_theme_color_override("font_color", Color.WHITE)
 
 func _create_basic_properties(parent: VBoxContainer):
 	var group_label = Label.new()
@@ -127,9 +447,11 @@ func _create_basic_properties(parent: VBoxContainer):
 	var name_label = Label.new()
 	name_label.text = "Name:"
 	name_label.custom_minimum_size.x = 80
+	_apply_control_theme(name_label)
 	name_container.add_child(name_label)
 	ui_room_name = LineEdit.new()
 	ui_room_name.text_changed.connect(_on_room_name_changed)
+	_apply_control_theme(ui_room_name)
 	name_container.add_child(ui_room_name)
 	
 	# Central color
@@ -138,6 +460,7 @@ func _create_basic_properties(parent: VBoxContainer):
 	var color_label = Label.new()
 	color_label.text = "Color:"
 	color_label.custom_minimum_size.x = 80
+	_apply_control_theme(color_label)
 	color_container.add_child(color_label)
 	ui_central_color = ColorPickerButton.new()
 	ui_central_color.color_changed.connect(_on_central_color_changed)
@@ -156,6 +479,7 @@ func _create_dimension_control(parent: VBoxContainer, label_text: String, contro
 	var label = Label.new()
 	label.text = label_text
 	label.custom_minimum_size.x = 80
+	_apply_control_theme(label)
 	container.add_child(label)
 	
 	var spinbox = SpinBox.new()
@@ -164,6 +488,7 @@ func _create_dimension_control(parent: VBoxContainer, label_text: String, contro
 	spinbox.step = step_val
 	spinbox.value = default_val
 	spinbox.value_changed.connect(callback)
+	_apply_control_theme(spinbox)
 	container.add_child(spinbox)
 	
 	# Assign to appropriate variable
@@ -177,12 +502,14 @@ func _create_window_properties(parent: VBoxContainer):
 	var group_label = Label.new()
 	group_label.text = "Window Settings"
 	group_label.add_theme_font_size_override("font_size", 14)
+	_apply_control_theme(group_label)
 	parent.add_child(group_label)
 	
 	# Has window checkbox
 	ui_has_window = CheckBox.new()
 	ui_has_window.text = "Has Window"
 	ui_has_window.toggled.connect(_on_has_window_changed)
+	_apply_control_theme(ui_has_window)
 	parent.add_child(ui_has_window)
 	
 	# Window style
@@ -207,12 +534,14 @@ func _create_door_properties(parent: VBoxContainer):
 	var group_label = Label.new()
 	group_label.text = "Door Settings"
 	group_label.add_theme_font_size_override("font_size", 14)
+	_apply_control_theme(group_label)
 	parent.add_child(group_label)
 	
 	# Has door checkbox
 	ui_has_door = CheckBox.new()
 	ui_has_door.text = "Has Door"
 	ui_has_door.toggled.connect(_on_has_door_changed)
+	_apply_control_theme(ui_has_door)
 	parent.add_child(ui_has_door)
 	
 	# Door style
@@ -240,12 +569,14 @@ func _create_option_control(parent: VBoxContainer, label_text: String, control_n
 	var label = Label.new()
 	label.text = label_text
 	label.custom_minimum_size.x = 80
+	_apply_control_theme(label)
 	container.add_child(label)
 	
 	var option_button = OptionButton.new()
 	for option in options:
 		option_button.add_item(option)
 	option_button.item_selected.connect(callback)
+	_apply_control_theme(option_button)
 	container.add_child(option_button)
 	
 	# Assign to appropriate variable
@@ -262,6 +593,7 @@ func _create_spinbox_control(parent: VBoxContainer, label_text: String, control_
 	var label = Label.new()
 	label.text = label_text
 	label.custom_minimum_size.x = 80
+	_apply_control_theme(label)
 	container.add_child(label)
 	
 	var spinbox = SpinBox.new()
@@ -270,6 +602,7 @@ func _create_spinbox_control(parent: VBoxContainer, label_text: String, control_
 	spinbox.step = step_val
 	spinbox.value = default_val
 	spinbox.value_changed.connect(callback)
+	_apply_control_theme(spinbox)
 	container.add_child(spinbox)
 	
 	# Assign to appropriate variable
@@ -293,27 +626,32 @@ func _create_geometry_display(parent: VBoxContainer):
 	var group_label = Label.new()
 	group_label.text = "Geometry Info"
 	group_label.add_theme_font_size_override("font_size", 14)
+	_apply_control_theme(group_label)
 	parent.add_child(group_label)
 	
 	geometry_display = RichTextLabel.new()
 	geometry_display.custom_minimum_size.y = 150
 	geometry_display.bbcode_enabled = true
+	_apply_control_theme(geometry_display)
 	parent.add_child(geometry_display)
 	
 	var refresh_button = Button.new()
 	refresh_button.text = "Refresh Geometry"
 	refresh_button.pressed.connect(_update_geometry_display)
+	_apply_control_theme(refresh_button)
 	parent.add_child(refresh_button)
 
 func _create_validation_display(parent: VBoxContainer):
 	var group_label = Label.new()
 	group_label.text = "Validation"
 	group_label.add_theme_font_size_override("font_size", 14)
+	_apply_control_theme(group_label)
 	parent.add_child(group_label)
 	
 	validation_display = RichTextLabel.new()
 	validation_display.custom_minimum_size.y = 100
 	validation_display.bbcode_enabled = true
+	_apply_control_theme(validation_display)
 	parent.add_child(validation_display)
 
 func _create_action_buttons(parent: VBoxContainer):
@@ -324,12 +662,14 @@ func _create_action_buttons(parent: VBoxContainer):
 	var change_color_button = Button.new()
 	change_color_button.text = "Random Color"
 	change_color_button.pressed.connect(_on_random_color_pressed)
+	_apply_control_theme(change_color_button)
 	action_container.add_child(change_color_button)
 	
 	var delete_button = Button.new()
 	delete_button.text = "Delete Shape"
 	delete_button.pressed.connect(_on_delete_shape_pressed)
 	delete_button.modulate = Color.LIGHT_CORAL  # Red tint for delete button
+	_apply_control_theme(delete_button)
 	action_container.add_child(delete_button)
 	
 	# Second row - Control buttons  
@@ -339,11 +679,13 @@ func _create_action_buttons(parent: VBoxContainer):
 	var apply_button = Button.new()
 	apply_button.text = "Apply Changes"
 	apply_button.pressed.connect(_apply_all_changes)
+	_apply_control_theme(apply_button)
 	button_container.add_child(apply_button)
 	
 	var close_button = Button.new()
 	close_button.text = "Close"
 	close_button.pressed.connect(_on_close_pressed)
+	_apply_control_theme(close_button)
 	button_container.add_child(close_button)
 
 func set_shape(shape: TetrisShape2D):
@@ -722,12 +1064,15 @@ func _create_csg_priority_control(parent: VBoxContainer):
 	group_label.text = "CSG Priority Control (Advanced)"
 	group_label.add_theme_font_size_override("font_size", 12)
 	group_label.add_theme_color_override("font_color", Color.ORANGE)
+	_apply_control_theme(group_label)  # Apply after setting orange color
+	group_label.add_theme_color_override("font_color", Color.ORANGE)  # Re-apply orange
 	parent.add_child(group_label)
 	
 	# Buton pentru afișarea ordinii priorităților
 	var show_order_button = Button.new()
 	show_order_button.text = "Show Priority Order"
 	show_order_button.pressed.connect(_on_show_priority_order_pressed)
+	_apply_control_theme(show_order_button)
 	parent.add_child(show_order_button)
 	
 	# Controale pentru ajustarea priorităților
@@ -740,6 +1085,8 @@ func _create_csg_priority_control(parent: VBoxContainer):
 	info_label.add_theme_font_size_override("font_size", 10)
 	info_label.add_theme_color_override("font_color", Color.GRAY)
 	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_apply_control_theme(info_label)
+	info_label.add_theme_color_override("font_color", Color.GRAY)  # Re-apply gray
 	priority_container.add_child(info_label)
 	
 	# Separator

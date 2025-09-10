@@ -27,3 +27,6 @@ anchor_right = 0.085
 anchor_bottom = 0.264
 offset_right = 0.0800018
 offset_bottom = 474.928
+
+[node name="Camera3D" type="Camera3D" parent="."]
+projection = 1
