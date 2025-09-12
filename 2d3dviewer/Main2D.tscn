@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://bfdvrplu7w7jv"]
+
+[ext_resource type="Script" uid="uid://cu0rbuxcii087" path="res://Main_2D.gd" id="1_feeyt"]
+
+[node name="GraphEdit" type="GraphEdit"]
+offset_right = 1686.0
+offset_bottom = 1075.0
+scroll_offset = Vector2(-80, -40)
+minimap_enabled = false
+script = ExtResource("1_feeyt")

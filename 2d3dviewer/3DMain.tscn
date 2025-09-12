@@ -1,0 +1,18 @@
+[gd_scene load_steps=4 format=3 uid="uid://dwn0ib4525i0f"]
+
+[ext_resource type="Script" uid="uid://c1dkh4omgr7c7" path="res://3d_main.gd" id="1_nv7qm"]
+[ext_resource type="Script" uid="uid://pxjcra80edbf" path="res://CameraRig.gd" id="2_73cx5"]
+[ext_resource type="Script" uid="uid://ccg4xlucevjxc" path="res://Grid.gd" id="3_786m3"]
+
+[node name="Node3D" type="Node3D"]
+rotation_order = 0
+script = ExtResource("1_nv7qm")
+
+[node name="CameraRig" type="Node3D" parent="."]
+script = ExtResource("2_73cx5")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+
+[node name="Grid" type="MeshInstance3D" parent="."]
+skeleton = NodePath("../CameraRig")
+script = ExtResource("3_786m3")
