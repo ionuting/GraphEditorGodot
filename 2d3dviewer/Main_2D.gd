@@ -2,8 +2,37 @@ extends GraphEdit
 
 var origin_dot: Control
 var grid_overlay: Control
+var rectangle_manager: RectangleManager
+var polygon_manager: PolygonManager
+var cell_manager: RectangleCellManager
+
+var placing_rect = false
 
 func _ready():
+	# Inițializează managerii
+	rectangle_manager = RectangleManager.new()
+	polygon_manager = PolygonManager.new()
+	cell_manager = RectangleCellManager.new()
+
+	# Input handling pentru dreptunghiuri interactive - pe grid_overlay
+func _on_grid_input(event):
+	print("Grid input primit: %s" % event.get_class())
+	
+	# Verifică dacă click-ul este pe zona butonului
+	if event is InputEventMouseButton:
+		var btn = get_node_or_null("AddRectButton")
+		if btn and btn.get_rect().has_point(event.position):
+			print("Click pe buton - ignorat")
+			return
+	
+	var world_pos = screen_to_world(event.position)
+	
+	if event is InputEventMouseMotion:
+		handle_mouse_motion(world_pos)
+	elif event is InputEventMouseButton:
+		print("Mouse button event: button=%d, pressed=%s" % [event.button_index, event.pressed])
+		handle_mouse_button(event, world_pos)= RectangleManager.new()
+	
 	# Setări inițiale pentru a semăna cu AutoCAD
 	setup_autocad_style()
 	
@@ -15,6 +44,22 @@ func _ready():
 	
 	# Poziția inițială - centrul ecranului ca origine
 	center_origin()
+
+	# Conectează butonul pentru adăugare dreptunghi
+	var btn = get_node_or_null("AddRectButton")
+	if btn:
+		btn.pressed.connect(_on_add_rect_button_pressed)
+		print("Buton conectat cu succes!")
+	else:
+		print("EROARE: Nu s-a găsit butonul AddRectButton")
+
+	# Folosim gui_input pe grid_overlay pentru a procesa evenimente
+
+	# Creează dreptunghiul 2D la apăsarea butonului
+func _on_add_rect_button_pressed():
+	print("Buton apăsat! Activez modul de plasare dreptunghi...")
+	placing_rect = true
+	print("placing_rect setat la: %s" % placing_rect)
 
 func setup_autocad_style():
 	# Culoare de fundal închisă (ca AutoCAD)
@@ -29,9 +74,12 @@ func create_grid_overlay():
 	# Creează un control pentru desenarea grid-ului și originii
 	grid_overlay = Control.new()
 	grid_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	grid_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Grid_overlay interceptează evenimente pentru dreptunghiuri
+	grid_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(grid_overlay)
 	grid_overlay.draw.connect(_draw_autocad_grid)
+	# Conectăm gui_input pe grid_overlay
+	grid_overlay.gui_input.connect(_on_grid_input)
 
 func center_origin():
 	# Centrează originea în mijlocul ecranului
@@ -56,6 +104,9 @@ func _draw_autocad_grid():
 	# Desenează originea
 	draw_origin_marker(origin_screen)
 
+	# Desenează dreptunghiurile folosind noul sistem
+	draw_rectangles()
+
 func draw_main_axes(origin_screen: Vector2, viewport_size: Vector2):
 	var axis_color = Color.RED
 	var axis_width = 2.0
@@ -75,6 +126,7 @@ func draw_main_axes(origin_screen: Vector2, viewport_size: Vector2):
 	)
 
 func draw_grid_lines(origin_screen: Vector2, viewport_size: Vector2):
+	# SCARA: 50 pixeli = 1 unitate AutoCAD
 	var grid_size = 50.0 * zoom  # Dimensiunea grid-ului adaptată la zoom
 	var grid_color = Color.GRAY
 	grid_color.a = 0.3
@@ -166,12 +218,95 @@ func world_to_autocad_node_position(autocad_pos: Vector2) -> Vector2:
 	# GraphNode folosește position_offset care e în coordonate "world"
 	return Vector2(autocad_pos.x, -autocad_pos.y)
 
-# Input handling pentru a afișa coordonatele cursorului
-func _gui_input(event):
+# Input handling pentru dreptunghiuri interactive - folosește _unhandled_input
+func _unhandled_input(event):
+	print("_unhandled_input apelat cu event: %s" % event.get_class())
+	# Procesează doar evenimentele care nu au fost consumate de UI (ex: butoane)
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		print("Event ignorat - nu este mouse")
+		return
+		
+	print("Unhandled event primit: %s" % event.get_class())
+	var world_pos = screen_to_world(event.position)
+	
 	if event is InputEventMouseMotion:
-		var world_pos = screen_to_world(event.position)
-		# Aici poți afișa coordonatele undeva în UI
-		print("Cursor: (%.2f, %.2f)" % [world_pos.x, world_pos.y])
+		handle_mouse_motion(world_pos)
+	elif event is InputEventMouseButton:
+		print("Mouse button event: button=%d, pressed=%s" % [event.button_index, event.pressed])
+		handle_mouse_button(event, world_pos)
+		# Consumă evenimentul pentru a preveni procesarea suplimentară
+		get_viewport().set_input_as_handled()
+
+func handle_mouse_motion(world_pos: Vector2):
+	# Actualizează hover grip
+	rectangle_manager.update_hover_grip(world_pos, zoom, world_to_screen)
+	
+	# Dacă tragem ceva, actualizează
+	if rectangle_manager.dragging_rectangle:
+		# Include snap points from polygons and cells while dragging rectangles
+		var polygon_snap_points = polygon_manager.get_snap_points()
+		var cell_snap_points = cell_manager.get_snap_points()
+		var all_snap_points = polygon_snap_points + cell_snap_points
+		rectangle_manager.update_drag(world_pos, all_snap_points)
+		if grid_overlay:
+			grid_overlay.queue_redraw()
+
+func handle_mouse_button(event: InputEventMouseButton, world_pos: Vector2):
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+		
+	if event.pressed:
+		handle_mouse_press(world_pos)
+	else:
+		handle_mouse_release(world_pos)
+
+func handle_mouse_press(world_pos: Vector2):
+	print("Handle mouse press - placing_rect: %s" % placing_rect)
+	if placing_rect:
+		# Aplica snap la punctele disponibile (poligoane, cell-uri, alte dreptunghiuri)
+		var polygon_snap_points = polygon_manager.get_snap_points()
+		var cell_snap_points = cell_manager.get_snap_points()
+		var rectangle_snap_points = rectangle_manager.get_snap_points()
+		var all_snap_points = polygon_snap_points + cell_snap_points + rectangle_snap_points
+		var snapped_pos = rectangle_manager.get_snapped_position(world_pos, all_snap_points)
+
+		# Plasează un dreptunghi nou la poziția cu snap
+		placing_rect = false
+		var rect = rectangle_manager.add_rectangle(snapped_pos, Vector2(0.25, 0.25))
+		print("Dreptunghi desenat la coordonate AutoCAD cu snap: (%.3f, %.3f)" % [snapped_pos.x, snapped_pos.y])
+		print("Total dreptunghiuri: %d" % rectangle_manager.rectangles.size())
+		if grid_overlay:
+			grid_overlay.queue_redraw()
+		return
+	
+	# Verifică dacă se apasă pe un grip - doar selectează dreptunghiul, nu redimensionează
+	var grip_info = rectangle_manager.get_grip_at_position(world_pos, zoom, world_to_screen)
+	if grip_info.rectangle and grip_info.grip != -1:
+		rectangle_manager.select_rectangle(grip_info.rectangle)
+		print("Grip selectat: %s pe dreptunghiul %d" % [Rectangle2D.GripPoint.keys()[grip_info.grip], grip_info.rectangle.id])
+		if grid_overlay:
+			grid_overlay.queue_redraw()
+		return
+	
+	# Verifică dacă se apasă pe un dreptunghi
+	print("Verificare click pe dreptunghi la poziția world: %s" % world_pos)
+	var rect = rectangle_manager.get_rectangle_at_position(world_pos)
+	if rect:
+		print("Dreptunghi găsit, începe drag")
+		rectangle_manager.start_drag_rectangle(rect, world_pos)
+	else:
+		print("Niciun dreptunghi găsit, deselectează toate")
+		# Deselectează toate
+		rectangle_manager.select_rectangle(null)
+	
+	if grid_overlay:
+		grid_overlay.queue_redraw()
+
+func handle_mouse_release(world_pos: Vector2):
+	if rectangle_manager.dragging_rectangle:
+		rectangle_manager.end_drag()
+		if grid_overlay:
+			grid_overlay.queue_redraw()
 
 # Funcție pentru a reseta view-ul la origine
 func reset_to_origin():
@@ -209,3 +344,27 @@ func zoom_to_fit_content():
 func get_cursor_autocad_coordinates() -> Vector2:
 	var mouse_pos = get_local_mouse_position()
 	return screen_to_world(mouse_pos)
+
+# Desenează toate dreptunghiurile cu noul sistem
+func draw_rectangles():
+	if not rectangle_manager:
+		return
+		
+	# Desenează dreptunghiurile
+	for rect in rectangle_manager.rectangles:
+		RectangleRenderer.draw_rectangle(grid_overlay, rect, zoom, world_to_screen)
+	
+	# Desenează grip-urile pentru dreptunghiul selectat
+	if rectangle_manager.selected_rectangle:
+		RectangleRenderer.draw_grip_points(
+			grid_overlay, 
+			rectangle_manager.selected_rectangle, 
+			zoom, 
+			world_to_screen,
+			rectangle_manager.hovered_grip
+		)
+	
+	# Desenează indicatorii de snap (dacă se trage ceva)
+	if rectangle_manager.dragging_rectangle:
+		var snap_points = rectangle_manager.get_snap_points()
+		RectangleRenderer.draw_snap_indicators(grid_overlay, snap_points, zoom, world_to_screen)

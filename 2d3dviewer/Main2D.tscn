@@ -8,3 +8,11 @@ offset_bottom = 1075.0
 scroll_offset = Vector2(-80, -40)
 minimap_enabled = false
 script = ExtResource("1_feeyt")
+
+[node name="AddRectButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 80.0
+offset_right = 246.0
+offset_bottom = 120.0
+text = "Adaugă dreptunghi 0.25x0.25"

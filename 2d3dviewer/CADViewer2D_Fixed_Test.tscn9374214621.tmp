@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3 uid="uid://dwtyv4vgjbjkf"]
+
+[ext_resource type="Script" uid="uid://ce7hyhsaatihm" path="res://CADViewer2D_Fixed.gd" id="1_fixed"]
+
+[node name="CADViewer2D_Fixed" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_fixed")
