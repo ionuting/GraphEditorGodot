@@ -1,0 +1,21 @@
+[gd_scene load_steps=2 format=3 uid="uid://i3pm3a1n1g60"]
+
+[ext_resource type="Script" uid="uid://c6u722l7ktwep" path="res://Main.gd" id="1"]
+
+[node name="Control" type="Control"]
+layout_mode = 3
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = -1904.0
+offset_bottom = -944.0
+script = ExtResource("1")
+
+[node name="TabContainer" type="TabContainer" parent="."]
+layout_mode = 0
+offset_right = 1917.0
+offset_bottom = 1042.0
+current_tab = 0
+
+[node name="TabBar" type="TabBar" parent="TabContainer"]
+layout_mode = 2
+metadata/_tab_index = 0

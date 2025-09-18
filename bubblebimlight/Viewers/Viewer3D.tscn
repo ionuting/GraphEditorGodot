@@ -1,0 +1,20 @@
+[gd_scene load_steps=3 format=3 uid="uid://cqaf8e54cgslo"]
+
+[ext_resource type="Script" uid="uid://sek6mw4uwnuk" path="res://Viewer3D.gd" id="1_ksvum"]
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_ksvum"]
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_ksvum")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.0177316, 0.999843, 0, -0.999843, 0.0177316, 0, 0, 0.963109)
+mesh = SubResource("CylinderMesh_ksvum")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="Panel" parent="CanvasLayer"]
+offset_right = 40.0
+offset_bottom = 40.0

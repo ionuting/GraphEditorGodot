@@ -1,0 +1,30 @@
+[gd_scene load_steps=2 format=3 uid="uid://bvmldj2l42v7m"]
+
+[ext_resource type="Script" uid="uid://befbd82vdkq8u" path="res://Viewers/Viewer2D.gd" id="1_7gyf5"]
+
+[node name="Control2" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_7gyf5")
+
+[node name="Grid" type="Node2D" parent="."]
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(957, 472)
+
+[node name="CoordLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 238.0
+offset_right = 396.0
+offset_bottom = 23.0
+
+[node name="InfoLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 5.0
+offset_top = 17.0
+offset_right = 163.0
+offset_bottom = 40.0
