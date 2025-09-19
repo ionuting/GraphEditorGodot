@@ -14,7 +14,7 @@ script = ExtResource("1_7gyf5")
 [node name="Grid" type="Node2D" parent="."]
 
 [node name="Camera2D" type="Camera2D" parent="."]
-position = Vector2(957, 472)
+position = Vector2(955, 399)
 
 [node name="CoordLabel" type="Label" parent="."]
 layout_mode = 0

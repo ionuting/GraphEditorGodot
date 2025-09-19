@@ -16,5 +16,7 @@ mesh = SubResource("CylinderMesh_ksvum")
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
 [node name="Panel" type="Panel" parent="CanvasLayer"]
-offset_right = 40.0
-offset_bottom = 40.0
+offset_left = 1629.0
+offset_top = 151.0
+offset_right = 1905.0
+offset_bottom = 648.0

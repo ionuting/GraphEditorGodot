@@ -1,5 +1,5 @@
 # CADViewer.gd (versiunea îmbunătățită cu snap)
-extends Node3D
+extends Control
 
 @onready var camera: Camera3D = $Camera3D
 @onready var canvas: Control = $CanvasLayer/Panel
@@ -119,11 +119,7 @@ func _setup_coordinate_label():
 
 func _setup_z_controls():
 	z_controls_panel = Panel.new()
-	
-	# Sub butoane (ultimul buton e la y=185 + înălțimea lui 30 = 215)
-	var y_offset = 10 + (6 * 35) + 20  # 6 butoane * 35 px + spațiu
-	z_controls_panel.position = Vector2(10, y_offset)
-	
+	z_controls_panel.position = Vector2(get_viewport().get_visible_rect().size.x - 250, 10)
 	z_controls_panel.size = Vector2(240, 160)
 	z_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
 	canvas.add_child(z_controls_panel)
@@ -188,14 +184,14 @@ func _setup_z_controls():
 	
 	var btn_ground = Button.new()
 	btn_ground.text = "Ground (0)"
-	btn_ground.position = Vector2(10, 155)
+	btn_ground.position = Vector2(10, 105)
 	btn_ground.size = Vector2(70, 25)
 	btn_ground.pressed.connect(_set_ground_level)
 	z_controls_panel.add_child(btn_ground)
 	
 	var btn_floor1 = Button.new()
 	btn_floor1.text = "Floor 1 (3m)"
-	btn_floor1.position = Vector2(135, 155)
+	btn_floor1.position = Vector2(85, 105)
 	btn_floor1.size = Vector2(70, 25)
 	btn_floor1.pressed.connect(_set_floor1_level)
 	z_controls_panel.add_child(btn_floor1)

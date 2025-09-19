@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://cq8jn4n2huyu3"]
+
+[node name="TopBar" type="Panel"]
+
+[node name="TopBarMargin" type="MarginContainer" parent="."]
+layout_mode = 0
+
+[node name="TopBarButtons" type="HBoxContainer" parent="TopBarMargin"]
+layout_mode = 2
+
+[node name="TopBarButtons_snap_grid" type="Button" parent="."]
+layout_mode = 0
+text = "Snap Grid"
+
+[node name="TopBarButtons_snap_toggle" type="Button" parent="."]
+layout_mode = 0
+offset_left = 93.0
+offset_right = 178.0
+offset_bottom = 31.0
+toggle_mode = true
+text = "Snap: OFF"

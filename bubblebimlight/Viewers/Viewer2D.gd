@@ -61,6 +61,12 @@ func _ready():
 	
 	print("=== CAD Viewer Ready ===")
 
+	# Track whether load_level was called before ready
+	if has_meta("_pending_load_level"):
+		var lvl = get_meta("_pending_load_level")
+		remove_meta("_pending_load_level")
+		load_level(lvl)
+
 func setup_ui():
 	# Label pentru coordonate (stânga jos)
 	coord_label = Label.new()
@@ -387,3 +393,29 @@ func print_debug():
 	print("Mouse filter: ", mouse_filter)
 	print("Focus mode: ", focus_mode)
 	print("==================")
+
+
+# Public API: încarcă/setează contextul pentru un nivel 2D
+func load_level(level_data: Dictionary) -> void:
+	# level_data expected keys: name, bottom, top
+	if not is_inside_tree() or not is_visible_in_tree():
+		# Dacă viewerul nu e încă ready/în tree, păstrează datele în meta și va fi procesat în _ready
+		set_meta("_pending_load_level", level_data.duplicate())
+		return
+
+	if typeof(level_data) != TYPE_DICTIONARY:
+		push_error("load_level expects a Dictionary")
+		return
+
+	# Exemplu de comportament: poziționează camera vertical la mijlocul nivelului și ajustează zoom
+	var bottom = level_data.get("bottom", 0.0)
+	var top = level_data.get("top", bottom + 2.8)
+	var mid_y = (bottom + top) * 0.5
+
+	# În world Z/Y mapping: folosim y ca vertical world coord
+	camera_position = Vector2(0, mid_y)
+	camera_zoom = 1.0
+	update_info_display()
+	queue_redraw()
+
+	print("Viewer2D: loaded level: ", level_data)

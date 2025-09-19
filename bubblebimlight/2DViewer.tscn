@@ -8,16 +8,17 @@ anchor_left = 0.458
 anchor_top = 0.943
 anchor_right = 0.458
 anchor_bottom = 0.943
-offset_left = -874.032
-offset_top = -893.192
-offset_right = 986.968
-offset_bottom = 174.808
+offset_left = -872.032
+offset_top = -754.4
+offset_right = 1035.97
+offset_bottom = 42.6
 script = ExtResource("1_7gyf5")
 
 [node name="Grid" type="Node2D" parent="."]
+position = Vector2(6, 6)
 
 [node name="Camera2D" type="Camera2D" parent="."]
-position = Vector2(957, 474)
+position = Vector2(958, 400)
 
 [node name="CoordLabel" type="Label" parent="."]
 layout_mode = 1
@@ -37,7 +38,7 @@ anchors_preset = -1
 anchor_top = 0.955
 anchor_right = 0.202
 anchor_bottom = 0.991
-offset_left = 15.0
-offset_top = 0.159973
-offset_right = -0.118011
-offset_bottom = -0.16803
+offset_left = 1503.0
+offset_top = -82.015
+offset_right = 1487.88
+offset_bottom = -82.343
