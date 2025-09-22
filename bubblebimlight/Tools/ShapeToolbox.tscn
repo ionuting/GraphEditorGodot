@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://g0u21stl3411"]
+
+[ext_resource type="Script" uid="uid://c3bf8voeq3dw7" path="res://Tools/ShapeToolbox.gd" id="1"]
+
+[node name="ShapeToolbox" type="Control"]
+custom_minimum_size = Vector2(260, 380)
+layout_mode = 3
+anchors_preset = 0
+offset_right = 260.0
+offset_bottom = 805.0
+script = ExtResource("1")

@@ -1,0 +1,21 @@
+[gd_scene load_steps=2 format=3 uid="uid://d1nnbpevk1rpf"]
+
+[ext_resource type="Script" uid="uid://babpfghs5rvt4" path="res://Controls/AccordionItemAnimated.gd" id="1"]
+
+[node name="AccordionItemAnimated" type="VBoxContainer"]
+script = ExtResource("1")
+
+[node name="Header" type="Button" parent="."]
+layout_mode = 2
+text = "Section"
+
+[node name="Content" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="DemoButton1" type="Button" parent="Content"]
+layout_mode = 2
+text = "Item 1"
+
+[node name="DemoButton2" type="Button" parent="Content"]
+layout_mode = 2
+text = "Item 2"

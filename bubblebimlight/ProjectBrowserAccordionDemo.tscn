@@ -1,0 +1,27 @@
+[gd_scene load_steps=3 format=3 uid="uid://3m1y3f087ie2"]
+
+[ext_resource type="PackedScene" uid="uid://d1nnbpevk1rpf" path="res://Controls/AccordionItemAnimated.tscn" id="1"]
+[ext_resource type="Script" uid="uid://c3dkrce4eiyx2" path="res://ProjectBrowserAccordionDemo.gd" id="2"]
+
+[node name="ProjectBrowserAccordionDemo" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("2")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 0
+
+[node name="BuildingParts" parent="VBox" instance=ExtResource("1")]
+layout_mode = 2
+
+[node name="BuildingParts#BuildingParts_Header" type="Button" parent="."]
+layout_mode = 0
+text = "BuildingParts"
+
+[node name="BuildingParts_Content#BuildingParts_Content_RoomBtn" type="Button" parent="."]
+layout_mode = 0
+text = "Room"
+
+[node name="BuildingParts_Content#BuildingParts_Content_ShellBtn" type="Button" parent="."]
+layout_mode = 0
+text = "Shell"

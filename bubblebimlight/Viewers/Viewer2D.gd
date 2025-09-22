@@ -5,6 +5,7 @@ extends Control
 
 # === GRID POINTS ===
 var grid_points: Array = []
+var placed_cells: Array = [] # stores RectangleCell instances placed in this viewer
 
 # === UI LABELS ===
 var coord_label: Label
@@ -133,6 +134,30 @@ func handle_mouse_button(event: InputEventMouseButton):
 		MOUSE_BUTTON_RIGHT:
 			if event.pressed and event.double_click:
 				center_on_origin()
+		MOUSE_BUTTON_LEFT:
+			# Placement handling: left mouse used for placement when placement_mode is active
+			if placement_mode:
+				if event.pressed:
+					# start placement (center mode)
+					_placement_start = screen_to_world(event.position)
+					_is_placing = true
+					call_deferred("update")
+				else:
+					# finalize placement
+					if _is_placing:
+						_is_placing = false
+						var center = _placement_start
+						var current = screen_to_world(event.position)
+						var half = (current - center).abs()
+						var size = Vector2(max(0.001, half.x * 2.0), max(0.001, half.y * 2.0))
+						# emit finalized signal with tool data, center and size
+						emit_signal("shape_placement_finalized", placement_tool.duplicate(), center, size)
+						# exit placement mode
+						placement_mode = false
+						placement_tool = {}
+						_placement_start = null
+						_placement_current = null
+						call_deferred("update")
 
 func handle_mouse_motion(event: InputEventMouseMotion):
 	# Actualizează afișajul coordonatelor
@@ -142,6 +167,11 @@ func handle_mouse_motion(event: InputEventMouseMotion):
 	# Pan dacă este activ
 	if is_panning:
 		update_pan(event.position)
+
+	# Update placement preview if active
+	if placement_mode and _is_placing:
+		_placement_current = screen_to_world(event.position)
+		call_deferred("update")
 
 func handle_keyboard(event: InputEventKey):
 	if event.pressed:
@@ -235,6 +265,25 @@ func _draw():
 	draw_origin()
 	# Puncte grid 2D
 	draw_grid_points()
+
+	# Draw placed rectangle cells (using RectangleCellRenderer)
+	for cell in placed_cells:
+		if cell:
+			# RectangleCellRenderer expects a Callable for world->screen conversion
+			RectangleCellRenderer.draw_rectangle_cell(self, cell, camera_zoom, Callable(self, "world_to_screen"))
+
+	# Draw placement preview
+	if placement_mode and _is_placing and _placement_start:
+		var center = _placement_start
+		var curr = _placement_current if _placement_current else center
+		var half = (curr - center).abs()
+		var rect = Rect2(center - half, half * 2.0)
+		var tl = world_to_screen(rect.position)
+		var br = world_to_screen(rect.position + rect.size)
+		var sr = Rect2(tl, br - tl)
+		# translucent fill + outline
+		draw_rect(sr, Color(0.0, 1.0, 0.0, 0.12), true)
+		draw_rect(sr, Color(0.0, 1.0, 0.0, 0.9), false, 2.0)
 	# Cursor pan
 	if is_panning:
 		draw_pan_cursor()
@@ -381,6 +430,36 @@ func draw_pan_cursor():
 func _on_gui_input(event):
 	# Această funcție se apelează automat pentru input-ul GUI
 	print("GUI Input: ", event)
+
+# --- Placement API ---
+signal shape_placement_finalized(tool: Dictionary, center: Vector2, size: Vector2)
+
+var placement_mode: bool = false
+var placement_tool: Dictionary = {}
+var _placement_start = null
+var _placement_current = null
+var _is_placing: bool = false
+
+func start_placement(tool: Dictionary) -> void:
+	placement_mode = true
+	placement_tool = tool.duplicate() if typeof(tool) == TYPE_DICTIONARY else {"item": str(tool)}
+	_placement_start = null
+	_placement_current = null
+	_is_placing = false
+	print("Viewer2D: placement started for tool %s" % [placement_tool])
+
+func cancel_placement() -> void:
+	placement_mode = false
+	placement_tool = {}
+	_placement_start = null
+	_placement_current = null
+	_is_placing = false
+	call_deferred("update")
+
+func add_rectangle_cell(cell) -> void:
+	# expects a RectangleCell instance
+	placed_cells.append(cell)
+	queue_redraw()
 
 func print_debug():
 	print("=== DEBUG INFO ===")

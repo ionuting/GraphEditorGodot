@@ -31,6 +31,8 @@ var orbit_pivot: Vector3 = Vector3.ZERO
 # UI elements
 var coord_label: Label
 var z_controls_panel: Panel
+var _zpanel_dragging: bool = false
+var _zpanel_drag_offset: Vector2 = Vector2.ZERO
 
 func _ready():
 	if canvas == null:
@@ -127,6 +129,10 @@ func _setup_z_controls():
 	z_controls_panel.size = Vector2(240, 160)
 	z_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
 	canvas.add_child(z_controls_panel)
+
+	# Allow the Z controls panel to be floatable/draggable inside the canvas
+	var z_gui_cb = Callable(self, "_on_z_controls_gui_input")
+	z_controls_panel.gui_input.connect(z_gui_cb)
 	
 	var title_label = Label.new()
 	title_label.text = "Z-Depth Controls"
@@ -208,6 +214,7 @@ func _setup_z_controls():
 	info_label.add_theme_font_size_override("font_size", 10)
 	info_label.name = "info_label"
 	z_controls_panel.add_child(info_label)
+
 
 func _on_view_button_pressed(view_name: String):
 	match view_name:

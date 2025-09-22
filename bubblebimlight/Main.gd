@@ -6,11 +6,15 @@ var snap_grid_panel: Control
 var snap_grid_panel_scene = preload("res://Shapes/GridPoints.tscn")
 var project_browser_scene = preload("res://ProjectBrowser.tscn")   # added
 var project_browser_instance: Control = null                      # added
+var shape_toolbox_scene = preload("res://Tools/ShapeToolbox.tscn")
+var shape_toolbox_instance: Control = null
+var current_tool: Dictionary = {} # {"category": String, "item": String}
 var viewer2d_scene = preload("res://Viewers/2DViewer.tscn")
 var viewer3dtab_scene = preload("res://Viewers/Viewer3DTab.tscn")
 var viewer3dtab_instance: Control = null
 var pending_view3d_data: Dictionary = {}
 var _closed_tabs_stack: Array = [] # stack of {view_data, title}
+var _tab_close_buttons: Array = []
 
 func _ready():
 	_setup_main_scene()
@@ -56,7 +60,9 @@ func _setup_main_scene():
 		viewer2d.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		viewer2d.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tab_container.add_child(viewer2d)
+	# initial tab title - generic
 	tab_container.set_tab_title(tab_container.get_tab_count() - 1, "2D View")
+	_attach_close_button_to_tab(tab_container, tab_container.get_tab_count() - 1)
 
 	# Rezervă tab pentru 3D (placeholder) — lazy load
 	var placeholder = Panel.new()
@@ -116,6 +122,8 @@ func _on_tab_changed(tab_idx: int) -> void:
 					pending_view3d_data = {}
 			else:
 				cad_viewer = null
+			# attach a close button to this tab's tab control
+			_attach_close_button_to_tab(tab_container, tab_idx)
 
 func _find_child_by_name(root: Node, name: String) -> Node:
 	# Recursive search for a child node by name inside `root` (depth-first)
@@ -175,7 +183,8 @@ func _on_project_open_view_3d_new(view_data: Dictionary) -> void:
 	tab_container.set_tab_title(tab_container.get_tab_count() - 1, title)
 	# connect closed signal to track closed tabs
 	if viewer3d_tab.has_signal("viewer_tab_closed"):
-		viewer3d_tab.connect("viewer_tab_closed", Callable(self, "_on_viewer_tab_closed"))
+		var viewer3d_tab_closed_cb = Callable(self, "_on_viewer_tab_closed")
+		viewer3d_tab.connect("viewer_tab_closed", viewer3d_tab_closed_cb)
 	tab_container.current_tab = tab_container.get_tab_count() - 1
 	# Forward view data (Viewer3DTab buffers if necessary)
 	if viewer3d_tab.has_method("set_view_data"):
@@ -200,11 +209,13 @@ func open_level_2d(level_data: Dictionary) -> void:
 	var host = container_info.host
 	var is_tab = container_info.is_tab
 
-	# If it's a TabContainer, try to reuse a 2D tab by title
+	# If it's a TabContainer, try to reuse an existing tab for this level name
 	if is_tab:
 		var tab_container = host as TabContainer
+		var level_name = str(level_data.get("name", "2D View"))
+		# Search for an already-open tab with the same level name
 		for i in range(tab_container.get_tab_count()):
-			if tab_container.get_tab_title(i) == "2D View":
+			if tab_container.get_tab_title(i) == level_name:
 				var candidate = tab_container.get_child(i)
 				if candidate and candidate.has_method("load_level"):
 					candidate.load_level(level_data)
@@ -222,14 +233,81 @@ func open_level_2d(level_data: Dictionary) -> void:
 		viewer2d.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	if is_tab:
-		(host as TabContainer).add_child(viewer2d)
-		(host as TabContainer).set_tab_title((host as TabContainer).get_tab_count() - 1, "2D View")
-		(host as TabContainer).current_tab = (host as TabContainer).get_tab_count() - 1
+		var tc = host as TabContainer
+		tc.add_child(viewer2d)
+		var title = str(level_data.get("name", "2D View"))
+		tc.set_tab_title(tc.get_tab_count() - 1, title)
+		tc.current_tab = tc.get_tab_count() - 1
+		# Add a small content-close button inside the viewer (top-right)
+		if viewer2d is Control:
+			var close_btn = Button.new()
+			close_btn.text = "×"
+			close_btn.flat = true
+			close_btn.tooltip_text = "Close tab"
+			close_btn.custom_minimum_size = Vector2(26, 20)
+			# We'll position the close button after the viewer layout is ready
+			close_btn.anchor_left = 0
+			close_btn.anchor_top = 0
+			close_btn.anchor_right = 0
+			close_btn.anchor_bottom = 0
+			# Defer positioning to after the viewer has a valid size
+			call_deferred("_position_content_close_button", viewer2d, close_btn)
+			# bind the viewer2d as the target to close - assign Callable to variable to avoid standalone lambda warning
+			var close_callable = Callable(self, "_on_content_close_pressed").bind(viewer2d)
+			close_btn.pressed.connect(close_callable)
+			viewer2d.add_child(close_btn)
 	else:
 		host.add_child(viewer2d)
 
 	if viewer2d.has_method("load_level"):
 		viewer2d.load_level(level_data)
+
+
+func _on_content_close_pressed(target_viewer: Control) -> void:
+	# Close a tab by providing its viewer content Control
+	if not target_viewer or not is_instance_valid(target_viewer):
+		return
+	var tc = _get_tab_container()
+	if not tc:
+		return
+	var children = tc.get_children()
+	if target_viewer in children:
+		tc.remove_child(target_viewer)
+		target_viewer.queue_free()
+	call_deferred("_position_tab_close_buttons")
+
+
+func _position_content_close_button(viewer: Control, btn: Control) -> void:
+	if not is_instance_valid(viewer) or not is_instance_valid(btn):
+		return
+	var parent_rect = viewer.get_rect()
+	var parent_size = parent_rect.size if parent_rect else Vector2.ZERO
+	var btn_size = btn.custom_minimum_size
+	# Place 8px from the right edge and 6px from the top
+	var x = max(0, parent_size.x - btn_size.x - 8)
+	var y = 6
+
+
+
+
+func _close_current_tab() -> void:
+	var tc = _get_tab_container()
+	if not tc:
+		return
+	var idx = tc.current_tab
+	if idx < 0 or idx >= tc.get_tab_count():
+		return
+	var child = tc.get_child(idx)
+	if child:
+		tc.remove_child(child)
+		child.queue_free()
+	call_deferred("_position_tab_close_buttons")
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	# Ctrl+W to close current tab
+	if event is InputEventKey and event.pressed and event.control and event.keycode == KEY_W:
+		_close_current_tab()
 
 func open_view_3d(view_data: Dictionary) -> void:
 	# Find or create a container to host viewers. Prefer `TabContainer`, otherwise fall back to a VBoxContainer
@@ -332,6 +410,146 @@ func _get_or_create_view_container() -> Dictionary:
 	add_child(v)
 	return {"host": v, "is_tab": false}
 
+
+func _attach_close_button_to_tab(tab_container: TabContainer, tab_idx: int) -> void:
+	# Create a small close button and overlay it on the tab button region
+	if not tab_container:
+		return
+	# TabContainer's tab objects aren't full Controls exposed; create a Button
+	# anchored to the tab area by using the tab button's rect if available.
+	var btn = Button.new()
+	btn.text = "×"
+	btn.flat = true
+	btn.tooltip_text = "Close tab"
+	btn.name = "TabClose"
+	btn.custom_minimum_size = Vector2(22, 18)
+	# connect with a bound Callable so the pressed signal will call the handler with the button
+	var tab_close_callable = Callable(self, "_on_tab_close_pressed").bind(btn)
+	btn.pressed.connect(tab_close_callable)
+
+	# Target the current child at tab_idx (the actual tab content Control)
+	var target_child = null
+	if tab_idx >= 0 and tab_idx < tab_container.get_child_count():
+		target_child = tab_container.get_child(tab_idx)
+	btn.set_meta("target_child", target_child)
+
+	# Add to a dedicated CanvasLayer overlay so the close button renders above the TabContainer
+	# Prefer the top CanvasLayer created by _setup_ui_buttons so overlay matches UI layer
+	var overlay = get_node_or_null("CanvasLayer") as CanvasLayer
+	if not overlay:
+		# fallback: create a CanvasLayer named "TabOverlayLayer"
+		overlay = CanvasLayer.new()
+		overlay.name = "TabOverlayLayer"
+		add_child(overlay)
+	overlay.add_child(btn)
+	# ensure button has a usable rect size for hit testing
+	if btn.get_rect().size == Vector2.ZERO:
+		btn.rect_size = btn.custom_minimum_size
+	# ensure the button is above other overlay content
+	btn.z_index = 10
+	_tab_close_buttons.append(btn)
+	# Defer positioning to next frame
+	call_deferred("_position_tab_close_buttons")
+
+
+func _position_tab_close_buttons() -> void:
+	var tc = _get_tab_container()
+	if not tc:
+		return
+	# Find the overlay CanvasLayer (same priority as in _attach_close_button_to_tab)
+	var overlay = get_node_or_null("CanvasLayer") as CanvasLayer
+	if not overlay:
+		overlay = get_node_or_null("TabOverlayLayer") as CanvasLayer
+	# Build a list of the current tab children (excluding overlay close buttons)
+	var tab_children = []
+	for c in tc.get_children():
+		if not (c is Button and c.name == "TabClose"):
+			tab_children.append(c)
+
+	var tab_count = tab_children.size()
+	if tab_count == 0:
+		# remove overlay buttons since there are no tabs
+		for b in _tab_close_buttons.duplicate():
+			if is_instance_valid(b):
+				b.visible = false
+		return
+
+	var start_x = tc.get_global_position().x
+	var total_w = tc.get_rect().size.x
+	var tab_w = max(60, total_w / max(1, tab_count))
+
+	# Position each overlay close button according to its target child index.
+	# Prefer using TabContainer.get_tab_rect(index) if present for precise positioning.
+	for btn in _tab_close_buttons.duplicate():
+		if not is_instance_valid(btn):
+			_tab_close_buttons.erase(btn)
+			continue
+		var target = btn.get_meta("target_child")
+		if not target or not is_instance_valid(target):
+			btn.visible = false
+			continue
+		var idx = tab_children.find(target)
+		if idx == -1:
+			btn.visible = false
+			continue
+
+		var use_exact = false
+		var rect = Rect2()
+		# Godot's TabContainer may expose get_tab_rect(index) in some versions; try to use it
+		if tc.has_method("get_tab_rect"):
+			# wrap in a safe call in case it throws
+			var ok = true
+			rect = tc.call("get_tab_rect", idx)
+			if rect and rect is Rect2:
+				use_exact = true
+
+		if use_exact:
+			# rect is local to TabContainer; convert to global
+			var global_rect_pos = tc.to_global(rect.position)
+			# center the close button inside the tab rect (overlay)
+			var btn_size = btn.get_rect().size
+			if btn_size == Vector2.ZERO:
+				btn_size = btn.custom_minimum_size
+			var center = global_rect_pos + rect.size * 0.5
+			# place using global coordinates (CanvasLayer has no to_local)
+			var gp = center - (btn_size * 0.5)
+			btn.visible = true
+			btn.global_position = gp
+		else:
+			# fallback heuristic
+			var global_x = start_x + idx * tab_w + tab_w - 18
+			var global_y = tc.get_global_position().y + 6
+			var btn_size = btn.get_rect().size
+			if btn_size == Vector2.ZERO:
+				btn_size = btn.custom_minimum_size
+			var gp = Vector2(global_x, global_y) - (btn_size * 0.5)
+			btn.visible = true
+			btn.global_position = gp
+
+
+func _on_tab_close_pressed(btn: Button) -> void:
+	if not btn or not (btn is Button):
+		return
+	var target = btn.get_meta("target_child")
+	var tc = _get_tab_container()
+	if not tc or not target:
+		return
+	# Remove the corresponding tab child
+	var children = tc.get_children()
+	if target in children:
+		tc.remove_child(target)
+		target.queue_free()
+	# Also free the close button
+	# Remove and free the overlay close button
+	if btn in _tab_close_buttons:
+		_tab_close_buttons.erase(btn)
+	if is_instance_valid(btn):
+		var parent = btn.get_parent()
+		if parent:
+			parent.remove_child(btn)
+		btn.queue_free()
+	call_deferred("_position_tab_close_buttons")
+
 # Trimite puncte de grid către Viewer2D
 func set_2d_grid_points(points: Array):
 	var tab_container = _get_tab_container()
@@ -402,7 +620,8 @@ func _setup_ui_buttons():
 	reopen_btn.name = "reopen_tab"
 	reopen_btn.text = "Reopen Tab"
 	reopen_btn.custom_minimum_size = Vector2(120, 32)
-	reopen_btn.pressed.connect(Callable(self, "_on_reopen_tab_pressed"))
+	var reopen_callable = Callable(self, "_on_reopen_tab_pressed")
+	reopen_btn.pressed.connect(reopen_callable)
 	hbox.add_child(reopen_btn)
 
 func _on_snap_grid_pressed():
@@ -428,6 +647,62 @@ func _on_snap_grid_pressed():
 	
 	# Adaugă panoul la scena principală
 	get_tree().root.add_child(snap_grid_panel)
+
+func _on_shape_selected(category: String, item: String) -> void:
+	# Set current tool for placement. UI/placement logic will read this variable.
+	current_tool = {"category": category, "item": item}
+	print("Selected tool: %s / %s" % [category, item])
+	# If the user picked an element that is a Rectangle-like (Room, Shell, Cell), start placement in active 2D viewer
+	var viewer2d = _get_active_2d_viewer()
+	if viewer2d and viewer2d.has_method("start_placement"):
+		# For now only start placement for elements and foundation cell
+		if category == "Elements" or (category == "Foundation" and item == "Cell"):
+			var tool = {"category": category, "item": item}
+			viewer2d.start_placement(tool)
+			# ensure we listen for placement finalization
+			if not viewer2d.is_connected("shape_placement_finalized", Callable(self, "_on_shape_placement_finalized")):
+				viewer2d.connect("shape_placement_finalized", Callable(self, "_on_shape_placement_finalized"))
+
+func _get_active_2d_viewer():
+	var tc = _get_tab_container()
+	if tc:
+		# find first child that is a viewer2d (has screen_to_world)
+		for c in tc.get_children():
+			if c and c.has_method("start_placement"):
+				return c
+	# fallback: search scene for Viewer2D nodes
+	var res = get_node_or_null("/root")
+	return null
+
+func _on_shape_placement_finalized(tool: Dictionary, center: Vector2, size: Vector2) -> void:
+	# Create a RectangleCell and add it to the active 2D viewer; use snap grid if available
+	var viewer2d = _get_active_2d_viewer()
+	if not viewer2d:
+		print("No active 2D viewer to place shape")
+		return
+
+	# Use snap grid panel if present to snap the center
+	var snap_panel = get_snap_grid_panel()
+	var snapped_center = center
+	if snap_panel and is_instance_valid(snap_panel):
+		# convert to Vector3 expected by snap helper (x,y,drawing_z)
+		var drawing_z = 0.0
+		if cad_viewer and cad_viewer.has_method("get_drawing_plane_z"):
+			drawing_z = cad_viewer.get_drawing_plane_z()
+		var world3 = Vector3(center.x, center.y, drawing_z)
+		var snapped3 = snap_panel.get_snap_point_at(world3, 0.5)
+		snapped_center = Vector2(snapped3.x, snapped3.y)
+
+	# Instantiate RectangleCell and assign properties
+	var rc = RectangleCell.new(snapped_center, size.x, size.y)
+	# optional: set default properties
+	rc.set_properties(tool.get("item", "Cell") , tool.get("category", "Element"), 0)
+
+	# Add to viewer
+	if viewer2d.has_method("add_rectangle_cell"):
+		viewer2d.add_rectangle_cell(rc)
+	else:
+		print("Viewer2D has no add_rectangle_cell method")
 
 func _on_snap_toggled(button_pressed: bool):
 	var btn = get_node("CanvasLayer/Panel/snap_toggle") as Button
@@ -481,28 +756,84 @@ func _create_project_browser_panel():
 	left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	main_layout.add_child(left_panel)
 
-	# instanțiază scena ProjectBrowser și o pune în panel
+	# instanțiază scena ProjectBrowser și toolbox și le pune într-un VBox pentru a nu se suprapune
 	project_browser_instance = project_browser_scene.instantiate()
-	left_panel.add_child(project_browser_instance)
-	# Dock the project browser to fill the left panel (ensure it's visually on the left)
-	if project_browser_instance is Control:
-		project_browser_instance.anchor_left = 0
-		project_browser_instance.anchor_top = 0
-		project_browser_instance.anchor_right = 1
-		project_browser_instance.anchor_bottom = 1
-		project_browser_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		project_browser_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	var left_vbox = VBoxContainer.new()
+	left_vbox.anchor_left = 0
+	left_vbox.anchor_top = 0
+	left_vbox.anchor_right = 1
+	left_vbox.anchor_bottom = 1
+	left_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_panel.add_child(left_vbox)
+
+	# Add Project Browser (expands)
+	if project_browser_instance:
+		left_vbox.add_child(project_browser_instance)
+		if project_browser_instance is Control:
+			project_browser_instance.anchor_left = 0
+			project_browser_instance.anchor_top = 0
+			project_browser_instance.anchor_right = 1
+			project_browser_instance.anchor_bottom = 1
+			project_browser_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			project_browser_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	# Place Shape Toolbox on the opposite side (right) so it doesn't overlap Project Browser
+	if shape_toolbox_scene:
+		# Ensure there's a right-side panel to hold the toolbox
+		var right_panel = main_layout.get_node_or_null("ToolboxPanel") as PanelContainer
+		if not right_panel:
+			right_panel = PanelContainer.new()
+			right_panel.name = "ToolboxPanel"
+			right_panel.custom_minimum_size = Vector2(260, 0)
+			right_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			right_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			# add to main layout (HBoxContainer) so it appears on the far right
+			main_layout.add_child(right_panel)
+
+		# instantiate toolbox if not already
+		if not shape_toolbox_instance or not is_instance_valid(shape_toolbox_instance):
+			shape_toolbox_instance = shape_toolbox_scene.instantiate()
+
+		if shape_toolbox_instance:
+			# prefer the toolbox's own minimum, otherwise set a sensible default
+			if not shape_toolbox_instance.custom_minimum_size or shape_toolbox_instance.custom_minimum_size == Vector2.ZERO:
+				shape_toolbox_instance.custom_minimum_size = Vector2(260, 200)
+			# Add toolbox as a child of the right panel
+			if shape_toolbox_instance.get_parent() != right_panel:
+				# if it was previously parented somewhere else, reparent it
+				if is_instance_valid(shape_toolbox_instance.get_parent()):
+					shape_toolbox_instance.get_parent().remove_child(shape_toolbox_instance)
+				right_panel.add_child(shape_toolbox_instance)
+			# set reasonable anchors/flags
+			if shape_toolbox_instance is Control:
+				shape_toolbox_instance.anchor_left = 0
+				shape_toolbox_instance.anchor_top = 0
+				shape_toolbox_instance.anchor_right = 1
+				shape_toolbox_instance.anchor_bottom = 1
+				shape_toolbox_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				shape_toolbox_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			# connect signal if present
+			if shape_toolbox_instance.has_signal("shape_selected"):
+				var cb = Callable(self, "_on_shape_selected")
+				if not shape_toolbox_instance.is_connected("shape_selected", cb):
+					shape_toolbox_instance.connect("shape_selected", cb)
 
 	# Connect signals from the Project Browser for opening views
 	if project_browser_instance and project_browser_instance.has_method("connect"):
 		if project_browser_instance.has_signal("open_level_2d"):
-			project_browser_instance.connect("open_level_2d", Callable(self, "_on_project_open_level_2d"))
+			var open_level_cb = Callable(self, "_on_project_open_level_2d")
+			project_browser_instance.connect("open_level_2d", open_level_cb)
 		if project_browser_instance.has_signal("open_view_3d"):
-			project_browser_instance.connect("open_view_3d", Callable(self, "_on_project_open_view_3d"))
+			var open_view_cb = Callable(self, "_on_project_open_view_3d")
+			project_browser_instance.connect("open_view_3d", open_view_cb)
 		if project_browser_instance.has_signal("open_view_3d_new"):
-			project_browser_instance.connect("open_view_3d_new", Callable(self, "_on_project_open_view_3d_new"))
+			var open_view_new_cb = Callable(self, "_on_project_open_view_3d_new")
+			project_browser_instance.connect("open_view_3d_new", open_view_new_cb)
 		if project_browser_instance.has_signal("level_renamed"):
-			project_browser_instance.connect("level_renamed", Callable(self, "_on_level_renamed"))
+			var level_renamed_cb = Callable(self, "_on_level_renamed")
+			project_browser_instance.connect("level_renamed", level_renamed_cb)
 
 	# opțional: păstrează referința la cad_viewer dacă e nevoie
 	if project_browser_instance.has_method("get_all_levels"):
