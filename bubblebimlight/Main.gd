@@ -750,15 +750,12 @@ func _create_project_browser_panel():
 
 	var left_panel = PanelContainer.new()
 	left_panel.name = "ProjectBrowserPanel"
-	# give it a default minimum width instead of offset_right
 	left_panel.custom_minimum_size = Vector2(260, 0)
 	left_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	main_layout.add_child(left_panel)
 
-	# instanțiază scena ProjectBrowser și toolbox și le pune într-un VBox pentru a nu se suprapune
-	project_browser_instance = project_browser_scene.instantiate()
-
+	# VBox for stacking ProjectBrowser and Toolbox vertically
 	var left_vbox = VBoxContainer.new()
 	left_vbox.anchor_left = 0
 	left_vbox.anchor_top = 0
@@ -768,57 +765,62 @@ func _create_project_browser_panel():
 	left_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left_panel.add_child(left_vbox)
 
-	# Add Project Browser (expands)
-	if project_browser_instance:
-		left_vbox.add_child(project_browser_instance)
-		if project_browser_instance is Control:
-			project_browser_instance.anchor_left = 0
-			project_browser_instance.anchor_top = 0
-			project_browser_instance.anchor_right = 1
-			project_browser_instance.anchor_bottom = 1
-			project_browser_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			project_browser_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# --- Collapsible ProjectBrowser ---
+	var pb_collapse_btn = Button.new()
+	pb_collapse_btn.text = "▼ Project Browser"
+	pb_collapse_btn.toggle_mode = true
+	pb_collapse_btn.button_pressed = true
+	left_vbox.add_child(pb_collapse_btn)
 
-	# Place Shape Toolbox on the opposite side (right) so it doesn't overlap Project Browser
-	if shape_toolbox_scene:
-		# Ensure there's a right-side panel to hold the toolbox
-		var right_panel = main_layout.get_node_or_null("ToolboxPanel") as PanelContainer
-		if not right_panel:
-			right_panel = PanelContainer.new()
-			right_panel.name = "ToolboxPanel"
-			right_panel.custom_minimum_size = Vector2(260, 0)
-			right_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-			right_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-			# add to main layout (HBoxContainer) so it appears on the far right
-			main_layout.add_child(right_panel)
+	project_browser_instance = project_browser_scene.instantiate()
+	project_browser_instance.visible = true
+	left_vbox.add_child(project_browser_instance)
+	if project_browser_instance is Control:
+		project_browser_instance.anchor_left = 0
+		project_browser_instance.anchor_top = 0
+		project_browser_instance.anchor_right = 1
+		project_browser_instance.anchor_bottom = 1
+		project_browser_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		project_browser_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-		# instantiate toolbox if not already
-		if not shape_toolbox_instance or not is_instance_valid(shape_toolbox_instance):
-			shape_toolbox_instance = shape_toolbox_scene.instantiate()
+	# Collapse/expand logic for ProjectBrowser
+	pb_collapse_btn.toggled.connect(func(pressed):
+		project_browser_instance.visible = pressed
+		pb_collapse_btn.text = ("▼ " if pressed else "► ") + "Project Browser"
+	)
 
-		if shape_toolbox_instance:
-			# prefer the toolbox's own minimum, otherwise set a sensible default
-			if not shape_toolbox_instance.custom_minimum_size or shape_toolbox_instance.custom_minimum_size == Vector2.ZERO:
-				shape_toolbox_instance.custom_minimum_size = Vector2(260, 200)
-			# Add toolbox as a child of the right panel
-			if shape_toolbox_instance.get_parent() != right_panel:
-				# if it was previously parented somewhere else, reparent it
-				if is_instance_valid(shape_toolbox_instance.get_parent()):
-					shape_toolbox_instance.get_parent().remove_child(shape_toolbox_instance)
-				right_panel.add_child(shape_toolbox_instance)
-			# set reasonable anchors/flags
-			if shape_toolbox_instance is Control:
-				shape_toolbox_instance.anchor_left = 0
-				shape_toolbox_instance.anchor_top = 0
-				shape_toolbox_instance.anchor_right = 1
-				shape_toolbox_instance.anchor_bottom = 1
-				shape_toolbox_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				shape_toolbox_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
-			# connect signal if present
-			if shape_toolbox_instance.has_signal("shape_selected"):
-				var cb = Callable(self, "_on_shape_selected")
-				if not shape_toolbox_instance.is_connected("shape_selected", cb):
-					shape_toolbox_instance.connect("shape_selected", cb)
+	# --- Collapsible Toolbox ---
+	var tb_collapse_btn = Button.new()
+	tb_collapse_btn.text = "▼ Toolbox"
+	tb_collapse_btn.toggle_mode = true
+	tb_collapse_btn.button_pressed = true
+	left_vbox.add_child(tb_collapse_btn)
+
+	if not shape_toolbox_instance or not is_instance_valid(shape_toolbox_instance):
+		shape_toolbox_instance = shape_toolbox_scene.instantiate()
+
+	shape_toolbox_instance.visible = true
+	left_vbox.add_child(shape_toolbox_instance)
+	if shape_toolbox_instance is Control:
+		if not shape_toolbox_instance.custom_minimum_size or shape_toolbox_instance.custom_minimum_size == Vector2.ZERO:
+			shape_toolbox_instance.custom_minimum_size = Vector2(260, 200)
+		shape_toolbox_instance.anchor_left = 0
+		shape_toolbox_instance.anchor_top = 0
+		shape_toolbox_instance.anchor_right = 1
+		shape_toolbox_instance.anchor_bottom = 1
+		shape_toolbox_instance.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		shape_toolbox_instance.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# connect signal if present
+	if shape_toolbox_instance.has_signal("shape_selected"):
+		var cb = Callable(self, "_on_shape_selected")
+		if not shape_toolbox_instance.is_connected("shape_selected", cb):
+			shape_toolbox_instance.connect("shape_selected", cb)
+
+	# Collapse/expand logic for Toolbox
+	tb_collapse_btn.toggled.connect(func(pressed):
+		shape_toolbox_instance.visible = pressed
+		tb_collapse_btn.text = ("▼ " if pressed else "► ") + "Toolbox"
+	)
 
 	# Connect signals from the Project Browser for opening views
 	if project_browser_instance and project_browser_instance.has_method("connect"):
@@ -837,5 +839,4 @@ func _create_project_browser_panel():
 
 	# opțional: păstrează referința la cad_viewer dacă e nevoie
 	if project_browser_instance.has_method("get_all_levels"):
-		# exemplu: proiect browser poate citi nivelele din Main dacă vrei
 		pass
