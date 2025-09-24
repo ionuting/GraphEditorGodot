@@ -1,0 +1,30 @@
+[gd_scene load_steps=2 format=3 uid="uid://c7d1j7ik5r8cj"]
+
+[ext_resource type="Script" uid="uid://dkqp8q2165vr3" path="res://cad_viewer_3d.gd" id="1_n7kv7"]
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_n7kv7")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="Panel" parent="CanvasLayer"]
+anchors_preset = -1
+anchor_right = 0.214
+anchor_bottom = 0.147
+offset_left = 1755.0
+offset_top = -1.0
+offset_right = 1555.28
+offset_bottom = -99.6
+
+[node name="Objects" type="Tree" parent="."]
+anchors_preset = -1
+anchor_right = 0.118
+anchor_bottom = 0.991
+offset_left = 2.0
+offset_top = 7.0
+offset_right = 102.36
+offset_bottom = 0.199951
