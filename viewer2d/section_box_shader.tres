@@ -1,0 +1,22 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[resource]
+shader = ExtResource( 1 )
+shader_param/box_min = Vector3(-10.0, -10.0, -10.0)
+shader_param/box_max = Vector3(10.0, 10.0, 10.0)
+
+[sub_resource type="Shader" id=1]
+code = "shader_type spatial;
+
+uniform vec3 box_min;
+uniform vec3 box_max;
+
+void fragment() {
+	vec3 pos = WORLD_POSITION;
+	if (pos.x < box_min.x || pos.x > box_max.x ||
+		pos.y < box_min.y || pos.y > box_max.y ||
+		pos.z < box_min.z || pos.z > box_max.z) {
+		discard;
+	}
+}
+"

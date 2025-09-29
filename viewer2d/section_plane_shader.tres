@@ -1,0 +1,24 @@
+[gd_resource type="ShaderMaterial" load_steps=1 format=3]
+
+[resource]
+shader = SubResource( 1 )
+shader_param/plane_origin = Vector3(0.0, 0.0, 0.0)
+shader_param/plane_normal = Vector3(0.0, 1.0, 0.0)
+shader_param/active = true
+
+[sub_resource type="Shader" id=1]
+shader_type spatial;
+
+uniform vec3 plane_origin;
+uniform vec3 plane_normal;
+uniform bool active = true;
+
+void fragment() {
+	if (active) {
+		vec3 pos = WORLD_POSITION;
+		float d = dot(pos - plane_origin, plane_normal);
+		if (d < 0.0) {
+			discard;
+		}
+	}
+}

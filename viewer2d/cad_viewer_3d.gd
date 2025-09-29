@@ -1,4 +1,3 @@
-
 # CADViewer.gd (versiunea îmbunătățită cu snap)
 extends Node3D
 
@@ -39,6 +38,11 @@ var selected_geometry: Node3D = null
 var default_material: StandardMaterial3D = null
 var layer_materials := {}
 
+# Import the SectionPlane script
+const SectionPlane = preload("res://section_plane.gd")
+
+var section_plane_instance: SectionPlane
+
 func _ready():
 	if canvas == null:
 		var cl = CanvasLayer.new()
@@ -75,8 +79,19 @@ func _ready():
 
 	_load_project_json()
 
-	# Import DXF la pornire
-	import_dxf_entities("res://out.json")
+	# Importă toate fișierele JSON valide din folder la pornire
+	import_all_json_from_folder("res://json_folder")
+
+	# Initialize the section plane instance
+	section_plane_instance = SectionPlane.new()
+	add_child(section_plane_instance)
+
+	# Example usage: Apply the section plane to all objects
+	var objects = get_tree().get_nodes_in_group("geometry")
+
+
+
+	_setup_section_plane_controls()
 
 func import_dxf_entities(path: String):
 	print("[DEBUG] Import DXF din ", path)
@@ -95,8 +110,11 @@ func import_dxf_entities(path: String):
 			print("[DEBUG] Entity: ", entity)
 			var mat: StandardMaterial3D = null
 			var layer_name = "default"
+			var is_void_layer = false
 			if entity.has("layer"):
 				layer_name = str(entity.layer)
+			if layer_name == "void":
+				is_void_layer = true
 			if layer_materials.has(layer_name):
 				var lconf = layer_materials[layer_name]
 				mat = StandardMaterial3D.new()
@@ -123,6 +141,9 @@ func import_dxf_entities(path: String):
 					obj = create_polygon(entity.points, entity.closed, height, z)
 					obj.material_override = mat
 					obj.set_meta("layer_name", layer_name)
+					if is_void_layer:
+						obj.visible = false
+						obj.set_meta("is_void", true)
 					var arr: PackedVector2Array = []
 					for p in entity.points:
 						arr.append(Vector2(p[0], p[1]))
@@ -132,6 +153,8 @@ func import_dxf_entities(path: String):
 					collision.polygon = arr
 					static_body.add_child(obj)
 					static_body.add_child(collision)
+					if is_void_layer:
+						static_body.set_meta("is_void", true)
 				"CIRCLE":
 					obj = create_circle(entity.center, entity.radius)
 					obj.material_override = mat
@@ -154,6 +177,25 @@ func import_dxf_entities(path: String):
 				group_node.name = layer_name
 				layer_groups[layer_name] = group_node
 			layer_groups[layer_name].add_child(static_body)
+
+		# After all objects are created, subtract voids from intersecting volumes
+		if layer_groups.has("void"):
+			var void_group = layer_groups["void"]
+			for void_body in void_group.get_children():
+				if void_body.has_meta("is_void"):
+					var void_obj = void_body.get_child(0)
+					for lname in layer_groups.keys():
+						if lname == "void":
+							continue
+						var group = layer_groups[lname]
+						for body in group.get_children():
+							var obj = body.get_child(0)
+							if obj and obj is CSGPolygon3D and void_obj and void_obj is CSGPolygon3D:
+								# Subtract void volume from this object
+								obj.operation = CSGPolygon3D.OPERATION_UNION
+								var void_clone = void_obj.duplicate()
+								void_clone.operation = CSGPolygon3D.OPERATION_SUBTRACTION
+								obj.add_child(void_clone)
 		# adaugă grupurile la nodul Objects
 		if objects_node:
 			for k in layer_groups.keys():
@@ -763,3 +805,189 @@ func _on_tree_item_edited():
 	if node_ref and node_ref is Node3D:
 		var visible = edited_item.is_checked(1)
 		node_ref.visible = visible
+
+func import_all_json_from_folder(folder_path: String):
+	var dir = DirAccess.open(folder_path)
+	if dir == null:
+		push_error("Nu pot deschide folderul: %s" % folder_path)
+		return
+	var projects := {}
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	while file_name != "":
+		if not dir.current_is_dir() and file_name.ends_with(".json"):
+			var file_path = folder_path + "/" + file_name
+			var json_str = FileAccess.get_file_as_string(file_path).strip_edges(true, true)
+			var data = JSON.parse_string(json_str)
+			if typeof(data) == TYPE_ARRAY and data.size() > 0 and data[0].has("type"):
+				print("[DEBUG] Import din: ", file_path)
+				# Build layer_groups for this file
+				var layer_groups := {}
+				for entity in data:
+					var mat: StandardMaterial3D = null
+					var layer_name = "default"
+					if entity.has("layer"):
+						layer_name = str(entity.layer)
+					if layer_materials.has(layer_name):
+						var lconf = layer_materials[layer_name]
+						mat = StandardMaterial3D.new()
+						mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+						mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					else:
+						mat = default_material
+					var static_body = StaticBody3D.new()
+					static_body.set_meta("selectable", true)
+					static_body.set_meta("entity_data", entity)
+					var obj: Node3D = null
+					match entity.type:
+						"LWPOLYLINE":
+							var height = 1.0
+							var z = 0.0
+							if entity.has("xdata") and entity.xdata.has("QCAD"):
+								for item in entity.xdata["QCAD"]:
+									if typeof(item) == TYPE_ARRAY and item.size() == 2:
+										var val = str(item[1])
+										if val.begins_with("height:"):
+											height = float(val.split(":")[1])
+										elif val.begins_with("z:"):
+											z = float(val.split(":")[1])
+							obj = create_polygon(entity.points, entity.closed, height, z)
+							obj.material_override = mat
+							obj.set_meta("layer_name", layer_name)
+							var arr: PackedVector2Array = []
+							for p in entity.points:
+								arr.append(Vector2(p[0], p[1]))
+							if entity.closed:
+								arr.append(Vector2(entity.points[0][0], entity.points[0][1]))
+							var collision = CollisionPolygon3D.new()
+							collision.polygon = arr
+							static_body.add_child(obj)
+							static_body.add_child(collision)
+						"CIRCLE":
+							obj = create_circle(entity.center, entity.radius)
+							obj.material_override = mat
+							obj.set_meta("layer_name", layer_name)
+							var arr: PackedVector2Array = []
+							var segments = 32
+							for i in range(segments):
+								var angle = (TAU / segments) * i
+								var x = entity.center[0] + cos(angle) * entity.radius
+								var y = entity.center[1] + sin(angle) * entity.radius
+								arr.append(Vector2(x, y))
+							arr.append(arr[0])
+							var collision = CollisionPolygon3D.new()
+							collision.polygon = arr
+							static_body.add_child(obj)
+							static_body.add_child(collision)
+					if not layer_groups.has(layer_name):
+						var group_node = Node3D.new()
+						group_node.name = layer_name
+						layer_groups[layer_name] = group_node
+					layer_groups[layer_name].add_child(static_body)
+				# Add layer_groups for this file
+				projects[file_name] = layer_groups
+				# Add to scene
+				var objects_node = get_node_or_null("Objects")
+				if objects_node:
+					for k in layer_groups.keys():
+						objects_node.add_child(layer_groups[k])
+			else:
+				print("[DEBUG] Fisier ignorat (schema invalidă): ", file_path)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	# Build Tree with project browser
+	populate_tree_with_projects(projects)
+
+func populate_tree_with_projects(projects: Dictionary):
+	var tree_node = get_node_or_null("Objects")
+	if tree_node == null:
+		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
+		return
+	tree_node.clear()
+	tree_node.set_columns(2)
+	var root = tree_node.create_item()
+	tree_node.set_column_title(0, "File/Layer/Object")
+	tree_node.set_column_title(1, "Visible")
+
+	tree_node.set_column_titles_visible(true)
+
+	for file_name in projects.keys():
+		var file_item = tree_node.create_item(root)
+		file_item.set_text(0, file_name)
+		file_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+		file_item.set_checked(1, true)
+		file_item.set_editable(1, true)
+		# Optionally store file reference
+		file_item.set_metadata(0, file_name)
+		var layer_groups = projects[file_name]
+		for layer_name in layer_groups.keys():
+			var layer_item = tree_node.create_item(file_item)
+			layer_item.set_text(0, layer_name)
+			layer_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+			layer_item.set_checked(1, true)
+			layer_item.set_editable(1, true)
+			layer_item.set_metadata(0, layer_groups[layer_name])
+			var group_node = layer_groups[layer_name]
+			for child in group_node.get_children():
+				var obj_item = tree_node.create_item(layer_item)
+				var display_name = child.name
+				var entity_data = child.get_meta("entity_data") if child.has_meta("entity_data") else null
+				var name_str = ""; var handle_str = ""
+				if entity_data != null:
+					if entity_data.has("xdata") and entity_data.xdata.has("QCAD"):
+						for item in entity_data.xdata["QCAD"]:
+							if typeof(item) == TYPE_ARRAY and item.size() == 2 and str(item[1]).begins_with("Name:"):
+								name_str = str(item[1]).split(":")[1]
+					if entity_data.has("handle"):
+						handle_str = str(entity_data.handle)
+				if name_str != "" and handle_str != "":
+					display_name = "%s_%s" % [name_str, handle_str]
+				obj_item.set_text(0, display_name)
+				obj_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+				obj_item.set_checked(1, true)
+				obj_item.set_editable(1, true)
+				obj_item.set_metadata(0, child)
+	tree_node.item_selected.connect(_on_tree_item_selected)
+	tree_node.item_edited.connect(_on_tree_item_edited)
+
+# Add UI controls for the section plane
+func _setup_section_plane_controls():
+	# Wrap the VBoxContainer in a Panel to adjust margins
+	var panel = Panel.new()
+	panel.name = "SectionPlaneControls"
+	panel.anchor_left = 0.0
+	panel.anchor_top = 0.0
+	panel.anchor_right = 1.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left = 10
+	panel.offset_top = 500 # Increased top offset to move the panel lower
+	panel.offset_right = -10
+	panel.offset_bottom = -10
+	canvas.add_child(panel)
+
+	var vbox = VBoxContainer.new()
+	panel.add_child(vbox)
+
+	var position_label = Label.new()
+	position_label.text = "Position"
+	vbox.add_child(position_label)
+
+	var position_slider = HSlider.new()
+	position_slider.min_value = -10.0
+	position_slider.max_value = 10.0
+	position_slider.value = 0.0
+	position_slider.step = 0.1
+	position_slider.connect("value_changed", Callable(self, "_on_section_plane_position_changed"))
+	vbox.add_child(position_slider)
+
+	var rotation_label = Label.new()
+	rotation_label.text = "Rotation"
+	vbox.add_child(rotation_label)
+
+	var rotation_slider = HSlider.new()
+	rotation_slider.min_value = -180.0
+	rotation_slider.max_value = 180.0
+	rotation_slider.value = 0.0
+	rotation_slider.step = 1.0
+	rotation_slider.connect("value_changed", Callable(self, "_on_section_plane_rotation_changed"))
+	vbox.add_child(rotation_slider)

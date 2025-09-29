@@ -15,9 +15,9 @@ script = ExtResource("1_n7kv7")
 anchors_preset = -1
 anchor_right = 0.214
 anchor_bottom = 0.147
-offset_left = 1734.0
-offset_top = 18.0
-offset_right = 1534.28
+offset_left = 1755.0
+offset_top = -1.0
+offset_right = 1555.28
 offset_bottom = -99.6
 
 [node name="Objects" type="Tree" parent="."]
@@ -28,12 +28,3 @@ offset_left = 2.0
 offset_top = 7.0
 offset_right = 102.36
 offset_bottom = 0.199951
-
-[node name="CSGCombiner3D" type="CSGCombiner3D" parent="."]
-
-[node name="CSGSolids" type="CSGPolygon3D" parent="CSGCombiner3D"]
-
-[node name="CSGCuts" type="CSGPolygon3D" parent="CSGCombiner3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0473224, 0.0119603, 0.0422792)
-operation = 2
-polygon = PackedVector2Array(0.297929, 0.350342, 0.367905, 0.855321, 0.696905, 0.819372, 0.799614, 0.468469)
