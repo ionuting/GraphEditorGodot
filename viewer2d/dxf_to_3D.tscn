@@ -11,6 +11,11 @@ script = ExtResource("1_n7kv7")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
+[node name="LoadDxfBtn" type="Button" parent="CanvasLayer"]
+offset_right = 169.0
+offset_bottom = 31.0
+text = "Selecteaza folder dxf"
+
 [node name="Panel" type="Panel" parent="CanvasLayer"]
 anchors_preset = -1
 anchor_right = 0.214
@@ -25,9 +30,9 @@ anchors_preset = -1
 anchor_right = 0.118
 anchor_bottom = 0.991
 offset_left = 2.0
-offset_top = 7.0
+offset_top = 82.0
 offset_right = 102.36
-offset_bottom = 0.199951
+offset_bottom = 0.200012
 
 [node name="CSGCombiner3D" type="CSGCombiner3D" parent="."]
 

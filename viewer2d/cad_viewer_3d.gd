@@ -38,10 +38,14 @@ var selected_geometry: Node3D = null
 var default_material: StandardMaterial3D = null
 var layer_materials := {}
 
+# Dictionary to track all imported projects (filename -> layer_groups)
+var imported_projects := {}
+
 # Import the SectionPlane script
 const SectionPlane = preload("res://section_plane.gd")
 
 var section_plane_instance: SectionPlane
+
 
 func _ready():
 	if canvas == null:
@@ -79,8 +83,8 @@ func _ready():
 
 	_load_project_json()
 
-	# Importă toate fișierele JSON valide din folder la pornire
-	import_all_json_from_folder("res://json_folder")
+ # (dezactivat) Importă toate fișierele JSON valide din folder la pornire
+ # import_all_json_from_folder("res://json_folder")
 
 	# Initialize the section plane instance
 	section_plane_instance = SectionPlane.new()
@@ -89,22 +93,98 @@ func _ready():
 	# Example usage: Apply the section plane to all objects
 	var objects = get_tree().get_nodes_in_group("geometry")
 
-
-
 	_setup_section_plane_controls()
 
-func import_dxf_entities(path: String):
+	# Integrare LoadDxfBtn
+	var load_btn = $CanvasLayer/LoadDxfBtn if has_node("CanvasLayer/LoadDxfBtn") else null
+	if load_btn:
+		print("[DEBUG] LoadDxfBtn found, connecting pressed signal.")
+		load_btn.pressed.connect(_on_load_dxf_btn_pressed)
+	else:
+		print("[DEBUG] LoadDxfBtn NOT found!")
+
+	# Creează FileDialog pentru selectare folder
+	if not has_node("CanvasLayer/DxfFolderDialog"):
+		var file_dialog = FileDialog.new()
+		file_dialog.name = "DxfFolderDialog"
+		file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		file_dialog.mode = FileDialog.FILE_MODE_OPEN_ANY
+		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+		file_dialog.connect("dir_selected", Callable(self, "_on_dxf_folder_selected"))
+		$CanvasLayer.add_child(file_dialog)
+		print("[DEBUG] DxfFolderDialog created and added to CanvasLayer.")
+	else:
+		print("[DEBUG] DxfFolderDialog already exists.")
+
+func _on_load_dxf_btn_pressed():
+	var file_dialog = $CanvasLayer.get_node("DxfFolderDialog")
+	if file_dialog:
+		print("[DEBUG] Showing DxfFolderDialog.")
+		# Setează folderul curent la ultima cale folosită sau la root-ul proiectului
+		if ProjectSettings.has_setting("dxf_last_folder"):
+			file_dialog.current_dir = ProjectSettings.get_setting("dxf_last_folder")
+		else:
+			file_dialog.current_dir = ProjectSettings.globalize_path("res://")
+		file_dialog.popup_centered()
+	else:
+		print("[DEBUG] DxfFolderDialog not found!")
+
+func _on_dxf_folder_selected(dir_path):
+	print("[DEBUG] Folder selectat:", dir_path)
+	ProjectSettings.set_setting("dxf_last_folder", dir_path)
+	var dir = DirAccess.open(dir_path)
+	if dir:
+		dir.list_dir_begin()
+		var file_name = dir.get_next()
+		while file_name != "":
+			if not dir.current_is_dir() and file_name.to_lower().ends_with(".dxf"):
+				var dxf_path = dir_path + "/" + file_name
+				var json_path = dir_path + "/" + file_name.get_basename() + ".json"
+				print("[DEBUG] Converting ", dxf_path, " to ", json_path)
+				_run_python_dxf_to_json(dxf_path, json_path)
+				print("[DEBUG] Importing JSON: ", json_path)
+				_import_json_file(json_path)
+			file_name = dir.get_next()
+		dir.list_dir_end()
+
+func _run_python_dxf_to_json(dxf_path: String, json_path: String):
+	var script_path = "python/dxf_to_json.py"
+	var args = [script_path, dxf_path, json_path]
+	var output = []
+	print("[DEBUG] Running Python: python ", args)
+	var exit_code = OS.execute("python", args, output, true)
+	print("[PYTHON OUTPUT]", output)
+	print("[PYTHON EXIT CODE]", exit_code)
+	return exit_code
+
+func _import_json_file(json_path: String):
+	if not FileAccess.file_exists(json_path):
+		push_error("Nu există fișierul JSON: %s" % json_path)
+		return
+	var json_str = FileAccess.get_file_as_string(json_path).strip_edges(true, true)
+	var data = JSON.parse_string(json_str)
+	if data == null:
+		push_error("Eroare la parsarea JSON-ului: %s" % json_path)
+		return
+	if typeof(data) == TYPE_ARRAY:
+		# Importă și adaugă la projects
+		var layer_groups = import_dxf_entities_return_groups(json_path)
+		if layer_groups != null:
+			var fname = json_path.get_file()
+			imported_projects[fname] = layer_groups
+			populate_tree_with_projects(imported_projects)
+
+func import_dxf_entities_return_groups(path: String):
 	print("[DEBUG] Import DXF din ", path)
 	if not FileAccess.file_exists(path):
 		push_error("Fișierul nu există: %s" % path)
-		return
+		return null
 	var json_str = FileAccess.get_file_as_string(path).strip_edges(true, true)
 	var data = JSON.parse_string(json_str)
 	if data == null:
 		push_error("Eroare la parsarea JSON-ului.")
-		return
+		return null
 	if typeof(data) == TYPE_ARRAY:
-		var objects_node = get_node_or_null("Objects")
 		var layer_groups := {}
 		for entity in data:
 			print("[DEBUG] Entity: ", entity)
@@ -171,7 +251,6 @@ func import_dxf_entities(path: String):
 					collision.polygon = arr
 					static_body.add_child(obj)
 					static_body.add_child(collision)
-			# grupare pe layere
 			if not layer_groups.has(layer_name):
 				var group_node = Node3D.new()
 				group_node.name = layer_name
@@ -197,15 +276,16 @@ func import_dxf_entities(path: String):
 								void_clone.operation = CSGPolygon3D.OPERATION_SUBTRACTION
 								obj.add_child(void_clone)
 		# adaugă grupurile la nodul Objects
+		var objects_node = get_node_or_null("Objects")
 		if objects_node:
 			for k in layer_groups.keys():
 				objects_node.add_child(layer_groups[k])
 				print("[DEBUG] Added layer group: ", k, " to Objects")
-			# Populează Tree-ul UI cu structura layerelor și obiectelor
-			populate_tree_with_layers(layer_groups)
 		else:
 			for k in layer_groups.keys():
 				add_child(layer_groups[k])
+		return layer_groups
+	return null
 
 func populate_tree_with_layers(layer_groups: Dictionary):
 		var tree_node = get_node_or_null("Objects")
@@ -802,9 +882,22 @@ func _on_tree_item_edited():
 	if edited_item == null:
 		return
 	var node_ref = edited_item.get_metadata(0)
+	var visible = edited_item.is_checked(1)
 	if node_ref and node_ref is Node3D:
-		var visible = edited_item.is_checked(1)
 		node_ref.visible = visible
+	# Propagă vizibilitatea și starea checkbox la toți descendenții din arbore
+	_set_tree_children_visible_and_checked(edited_item, visible)
+
+# Propagă recursiv vizibilitatea și starea checkbox la toți descendenții unui TreeItem
+func _set_tree_children_visible_and_checked(tree_item: TreeItem, visible: bool):
+	var child = tree_item.get_first_child()
+	while child:
+		child.set_checked(1, visible)
+		var node_ref = child.get_metadata(0)
+		if node_ref and node_ref is Node3D:
+			node_ref.visible = visible
+		_set_tree_children_visible_and_checked(child, visible)
+		child = child.get_next()
 
 func import_all_json_from_folder(folder_path: String):
 	var dir = DirAccess.open(folder_path)
