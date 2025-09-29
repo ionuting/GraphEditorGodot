@@ -41,12 +41,6 @@ var layer_materials := {}
 # Dictionary to track all imported projects (filename -> layer_groups)
 var imported_projects := {}
 
-# Import the SectionPlane script
-const SectionPlane = preload("res://section_plane.gd")
-
-var section_plane_instance: SectionPlane
-
-
 func _ready():
 	if canvas == null:
 		var cl = CanvasLayer.new()
@@ -81,19 +75,12 @@ func _ready():
 	_update_camera_clipping()
 	_create_snap_preview_marker()
 
-	_load_project_json()
-
  # (dezactivat) Importă toate fișierele JSON valide din folder la pornire
  # import_all_json_from_folder("res://json_folder")
 
-	# Initialize the section plane instance
-	section_plane_instance = SectionPlane.new()
-	add_child(section_plane_instance)
 
 	# Example usage: Apply the section plane to all objects
 	var objects = get_tree().get_nodes_in_group("geometry")
-
-	_setup_section_plane_controls()
 
 	# Integrare LoadDxfBtn
 	var load_btn = $CanvasLayer/LoadDxfBtn if has_node("CanvasLayer/LoadDxfBtn") else null
@@ -129,6 +116,8 @@ func _on_load_dxf_btn_pressed():
 	else:
 		print("[DEBUG] DxfFolderDialog not found!")
 
+
+# Asigură-te că această funcție este la nivel global, nu în interiorul altei funcții sau clase
 func _on_dxf_folder_selected(dir_path):
 	print("[DEBUG] Folder selectat:", dir_path)
 	ProjectSettings.set_setting("dxf_last_folder", dir_path)
@@ -136,182 +125,223 @@ func _on_dxf_folder_selected(dir_path):
 	if dir:
 		dir.list_dir_begin()
 		var file_name = dir.get_next()
+		var imported_combiners := {}
 		while file_name != "":
 			if not dir.current_is_dir() and file_name.to_lower().ends_with(".dxf"):
 				var dxf_path = dir_path + "/" + file_name
 				var json_path = dir_path + "/" + file_name.get_basename() + ".json"
 				print("[DEBUG] Converting ", dxf_path, " to ", json_path)
-				_run_python_dxf_to_json(dxf_path, json_path)
+				var exit_code = _run_python_dxf_to_json(dxf_path, json_path)
 				print("[DEBUG] Importing JSON: ", json_path)
-				_import_json_file(json_path)
+				if exit_code == 0 and FileAccess.file_exists(json_path):
+					var combiner = await import_dxf_entities_csg_combiner(json_path)
+					if combiner:
+						imported_combiners[file_name.get_basename()] = combiner
 			file_name = dir.get_next()
 		dir.list_dir_end()
+		# Populează arborele (tree) cu combinerele importate
+		if imported_combiners.size() > 0:
+			populate_tree_with_projects_csg(imported_combiners)
 
 func _run_python_dxf_to_json(dxf_path: String, json_path: String):
 	var script_path = "python/dxf_to_json.py"
 	var args = [script_path, dxf_path, json_path]
 	var output = []
-	print("[DEBUG] Running Python: python ", args)
+	print("[DEBUG] Running Python script with arguments: python ", args)
 	var exit_code = OS.execute("python", args, output, true)
-	print("[PYTHON OUTPUT]", output)
-	print("[PYTHON EXIT CODE]", exit_code)
+	print("[DEBUG] Python script output:", output)
+	print("[DEBUG] Python script exit code:", exit_code)
+
+	if exit_code != 0:
+		push_error("Python script failed with exit code %d. Check the script and input files." % exit_code)
+		for line in output:
+			print("[PYTHON ERROR]", line)
 	return exit_code
 
-func _import_json_file(json_path: String):
-	if not FileAccess.file_exists(json_path):
-		push_error("Nu există fișierul JSON: %s" % json_path)
-		return
-	var json_str = FileAccess.get_file_as_string(json_path).strip_edges(true, true)
-	var data = JSON.parse_string(json_str)
-	if data == null:
-		push_error("Eroare la parsarea JSON-ului: %s" % json_path)
-		return
-	if typeof(data) == TYPE_ARRAY:
-		# Importă și adaugă la projects
-		var layer_groups = import_dxf_entities_return_groups(json_path)
-		if layer_groups != null:
-			var fname = json_path.get_file()
-			imported_projects[fname] = layer_groups
-			populate_tree_with_projects(imported_projects)
 
-func import_dxf_entities_return_groups(path: String):
-	print("[DEBUG] Import DXF din ", path)
+func import_dxf_entities_csg_combiner(path: String) -> CSGCombiner3D:
+	print("[DEBUG] Importing DXF from path:", path)
 	if not FileAccess.file_exists(path):
-		push_error("Fișierul nu există: %s" % path)
+		push_error("File does not exist: %s" % path)
 		return null
+
 	var json_str = FileAccess.get_file_as_string(path).strip_edges(true, true)
+	print("[DEBUG] JSON string loaded from file (first 100 chars):", json_str.substr(0, 100), "...")
+
 	var data = JSON.parse_string(json_str)
 	if data == null:
-		push_error("Eroare la parsarea JSON-ului.")
+		push_error("Failed to parse JSON. Check the file format.")
 		return null
-	if typeof(data) == TYPE_ARRAY:
-		var layer_groups := {}
-		for entity in data:
-			print("[DEBUG] Entity: ", entity)
-			var mat: StandardMaterial3D = null
-			var layer_name = "default"
-			var is_void_layer = false
-			if entity.has("layer"):
-				layer_name = str(entity.layer)
-			if layer_name == "void":
-				is_void_layer = true
-			if layer_materials.has(layer_name):
-				var lconf = layer_materials[layer_name]
-				mat = StandardMaterial3D.new()
-				mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
-				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			else:
-				mat = default_material
-			var static_body = StaticBody3D.new()
-			static_body.set_meta("selectable", true)
-			static_body.set_meta("entity_data", entity)
-			var obj: Node3D = null
-			match entity.type:
-				"LWPOLYLINE":
-					var height = 1.0
-					var z = 0.0
-					if entity.has("xdata") and entity.xdata.has("QCAD"):
-						for item in entity.xdata["QCAD"]:
-							if typeof(item) == TYPE_ARRAY and item.size() == 2:
-								var val = str(item[1])
-								if val.begins_with("height:"):
-									height = float(val.split(":")[1])
-								elif val.begins_with("z:"):
-									z = float(val.split(":")[1])
-					obj = create_polygon(entity.points, entity.closed, height, z)
-					obj.material_override = mat
-					obj.set_meta("layer_name", layer_name)
-					if is_void_layer:
-						obj.visible = false
-						obj.set_meta("is_void", true)
-					var arr: PackedVector2Array = []
-					for p in entity.points:
-						arr.append(Vector2(p[0], p[1]))
-					if entity.closed:
-						arr.append(Vector2(entity.points[0][0], entity.points[0][1]))
-					var collision = CollisionPolygon3D.new()
-					collision.polygon = arr
-					static_body.add_child(obj)
-					static_body.add_child(collision)
-					if is_void_layer:
-						static_body.set_meta("is_void", true)
-				"CIRCLE":
-					obj = create_circle(entity.center, entity.radius)
-					obj.material_override = mat
-					obj.set_meta("layer_name", layer_name)
-					var arr: PackedVector2Array = []
-					var segments = 32
-					for i in range(segments):
-						var angle = (TAU / segments) * i
-						var x = entity.center[0] + cos(angle) * entity.radius
-						var y = entity.center[1] + sin(angle) * entity.radius
-						arr.append(Vector2(x, y))
-					arr.append(arr[0])
-					var collision = CollisionPolygon3D.new()
-					collision.polygon = arr
-					static_body.add_child(obj)
-					static_body.add_child(collision)
-			if not layer_groups.has(layer_name):
-				var group_node = Node3D.new()
-				group_node.name = layer_name
-				layer_groups[layer_name] = group_node
-			layer_groups[layer_name].add_child(static_body)
+	if typeof(data) != TYPE_ARRAY:
+		push_error("JSON data is not an array. Check the file content.")
+		return null
 
-		# After all objects are created, subtract voids from intersecting volumes
-		if layer_groups.has("void"):
-			var void_group = layer_groups["void"]
-			for void_body in void_group.get_children():
-				if void_body.has_meta("is_void"):
-					var void_obj = void_body.get_child(0)
-					for lname in layer_groups.keys():
-						if lname == "void":
-							continue
-						var group = layer_groups[lname]
-						for body in group.get_children():
-							var obj = body.get_child(0)
-							if obj and obj is CSGPolygon3D and void_obj and void_obj is CSGPolygon3D:
-								# Subtract void volume from this object
-								obj.operation = CSGPolygon3D.OPERATION_UNION
-								var void_clone = void_obj.duplicate()
-								void_clone.operation = CSGPolygon3D.OPERATION_SUBTRACTION
-								obj.add_child(void_clone)
-		# adaugă grupurile la nodul Objects
-		var objects_node = get_node_or_null("Objects")
-		if objects_node:
-			for k in layer_groups.keys():
-				objects_node.add_child(layer_groups[k])
-				print("[DEBUG] Added layer group: ", k, " to Objects")
+	print("[DEBUG] JSON data parsed successfully. Number of entities:", data.size())
+
+	var combiner = CSGCombiner3D.new()
+	combiner.name = path.get_file().get_basename() + "_combiner"
+	var union_solids := []
+	var subtraction_solids := []
+
+	var batch_size = 200
+	var entity_count = 0
+	for entity in data:
+		if not entity.has("type"):
+			continue
+		if not entity.has("points") and entity.type in ["LWPOLYLINE"]:
+			continue
+
+		var mat: StandardMaterial3D = null
+		var layer_name = "default"
+		var is_void_layer = false
+		var height = 1.0
+		var z = 0.0
+
+		if entity.has("layer"):
+			layer_name = str(entity.layer)
+		if layer_name == "void":
+			is_void_layer = true
+		if layer_materials.has(layer_name):
+			var lconf = layer_materials[layer_name]
+			mat = StandardMaterial3D.new()
+			mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+
 		else:
-			for k in layer_groups.keys():
-				add_child(layer_groups[k])
-		return layer_groups
-	return null
+			mat = default_material
 
-func populate_tree_with_layers(layer_groups: Dictionary):
-		var tree_node = get_node_or_null("Objects")
-		if tree_node == null:
-			print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
-			return
-		tree_node.clear()
-		tree_node.set_columns(2)
-		var root = tree_node.create_item()
+
+		var csg = CSGPolygon3D.new()
+		match entity.type:
+			"LWPOLYLINE":
+				if entity.has("xdata") and entity.xdata.has("QCAD"):
+					for item in entity.xdata["QCAD"]:
+						if typeof(item) == TYPE_ARRAY and item.size() == 2:
+							var val = str(item[1])
+							if val.begins_with("height:"):
+								height = float(val.split(":")[1])
+							elif val.begins_with("z:"):
+								z = float(val.split(":")[1])
+				csg.position.z = z + height
+				var pts := []
+				for p in entity.points:
+					pts.append(Vector2(p[0], p[1]))
+				if entity.closed and pts.size() > 0:
+					pts.append(pts[0])
+				csg.polygon = PackedVector2Array(pts)
+				csg.mode = CSGPolygon3D.MODE_DEPTH
+				csg.depth = height
+				csg.material = mat
+				csg.visible = true
+			"CIRCLE":
+				if entity.has("xdata") and entity.xdata.has("QCAD"):
+					for item in entity.xdata["QCAD"]:
+						if typeof(item) == TYPE_ARRAY and item.size() == 2:
+							var val = str(item[1])
+							if val.begins_with("height:"):
+								height = float(val.split(":")[1])
+							elif val.begins_with("z:"):
+								z = float(val.split(":")[1])
+				var segments = 32
+				var arr: PackedVector2Array = []
+				for i in range(segments):
+					var angle = (TAU / segments) * i
+					var x = entity.center[0] + cos(angle) * entity.radius
+					var y = entity.center[1] + sin(angle) * entity.radius
+					arr.append(Vector2(x, y))
+				arr.append(arr[0])
+				csg.polygon = arr
+				csg.mode = CSGPolygon3D.MODE_DEPTH
+				csg.depth = max(height, 0.01)
+				csg.position.z = z + height
+				csg.material = mat
+				csg.visible = true
+
+		if is_void_layer:
+			csg.operation = CSGPolygon3D.OPERATION_SUBTRACTION
+			subtraction_solids.append(csg)
+		else:
+			csg.operation = CSGPolygon3D.OPERATION_UNION
+			union_solids.append(csg)
+
+		entity_count += 1
+		if entity_count % batch_size == 0:
+			await get_tree().process_frame
+
+	for solid in union_solids:
+		combiner.add_child(solid)
+	for solid in subtraction_solids:
+		combiner.add_child(solid)
+
+	var objects_node = get_node_or_null("Objects")
+	if objects_node:
+		objects_node.add_child(combiner)
+	else:
+		add_child(combiner)
+
+	return combiner
+
+
+# Funcție utilitară comună pentru popularea arborelui
+
+func populate_tree_generic(tree_data: Dictionary, mode: String = "project"):
+	var tree_node = get_node_or_null("Objects")
+	if tree_node == null:
+		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
+		return
+	tree_node.clear()
+	tree_node.set_columns(2)
+	var root = tree_node.create_item()
+	if mode == "project":
+		tree_node.set_column_title(0, "File/CSG/Object")
+	elif mode == "layer":
 		tree_node.set_column_title(0, "Name")
-		tree_node.set_column_title(1, "Visible")
-		tree_node.set_column_titles_visible(true)
+	else:
+		tree_node.set_column_title(0, "Object")
+	tree_node.set_column_title(1, "Visible")
+	tree_node.set_column_titles_visible(true)
 
-		for layer_name in layer_groups.keys():
-			var layer_item = tree_node.create_item(root)
-			layer_item.set_text(0, layer_name)
-			# Adaugă checkbox pentru layer
-			layer_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-			layer_item.set_checked(1, true)
-			layer_item.set_editable(1, true)
-			# Stochează referința la grupul layer
-			layer_item.set_metadata(0, layer_groups[layer_name])
-			var group_node = layer_groups[layer_name]
-			for child in group_node.get_children():
-				var obj_item = tree_node.create_item(layer_item)
-				# Extrage denumirea din xdata (Name:...) și numărul din handle
+	for key1 in tree_data.keys():
+		var item1 = tree_node.create_item(root)
+		item1.set_text(0, key1)
+		item1.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+		item1.set_checked(1, true)
+		item1.set_editable(1, true)
+		item1.set_metadata(0, tree_data[key1])
+		var node1 = tree_data[key1]
+		var children2 = []
+		if mode == "project":
+			if node1.has_method("get_children"):
+				children2 = node1.get_children()
+		else:
+			if typeof(node1) == TYPE_DICTIONARY:
+				children2 = node1.keys()
+		for key2 in children2:
+			var item2 = tree_node.create_item(item1)
+			var node2 = (mode == "project" and key2 or node1[key2])
+			var label_text = ""
+			if mode == "project":
+				if key2 is Object and key2.has_method("get_name"):
+					label_text = str(key2.name)
+				else:
+					label_text = str(key2)
+			else:
+				label_text = str(key2)
+			item2.set_text(0, label_text)
+			item2.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+			item2.set_checked(1, true)
+			item2.set_editable(1, true)
+			item2.set_metadata(0, node2)
+			var children3 = []
+			if mode == "project":
+				if key2.has_method("get_children"):
+					children3 = key2.get_children()
+			else:
+				if node2.has_method("get_children"):
+					children3 = node2.get_children()
+			for child in children3:
+				var obj_item = tree_node.create_item(item2)
 				var display_name = child.name
 				var entity_data = child.get_meta("entity_data") if child.has_meta("entity_data") else null
 				var name_str = ""; var handle_str = ""
@@ -325,15 +355,20 @@ func populate_tree_with_layers(layer_groups: Dictionary):
 				if name_str != "" and handle_str != "":
 					display_name = "%s_%s" % [name_str, handle_str]
 				obj_item.set_text(0, display_name)
-				# Adaugă checkbox pentru obiect
 				obj_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
 				obj_item.set_checked(1, true)
 				obj_item.set_editable(1, true)
-				# Stochează referința la nodul 3D
 				obj_item.set_metadata(0, child)
-		# Conectăm semnalul de selecție și toggle pentru checkbox
+	if not tree_node.is_connected("item_selected", Callable(self, "_on_tree_item_selected")):
 		tree_node.item_selected.connect(_on_tree_item_selected)
+	if not tree_node.is_connected("item_edited", Callable(self, "_on_tree_item_edited")):
 		tree_node.item_edited.connect(_on_tree_item_edited)
+
+func populate_tree_with_projects_csg(projects: Dictionary):
+	populate_tree_generic(projects, "project")
+
+func populate_tree_with_layers(layer_groups: Dictionary):
+	populate_tree_generic(layer_groups, "layer")
 func create_polygon(points: Array, closed: bool, height: float = 1.0, z: float = 0.0) -> CSGPolygon3D:
 	print("[DEBUG] create_polygon points=", points, " closed=", closed, " height=", height, " z=", z)
 	var arr: PackedVector2Array = []
@@ -346,27 +381,6 @@ func create_polygon(points: Array, closed: bool, height: float = 1.0, z: float =
 	csg.mode = CSGPolygon3D.MODE_DEPTH
 	csg.depth = height
 	csg.transform.origin.z = z + height
-	# Adaug CollisionPolygon3D pentru selecție
-	var collision = CollisionPolygon3D.new()
-	collision.polygon = arr
-	csg.add_child(collision)
-	csg.set_meta("selectable", true)
-	csg.set_meta("original_material", csg.material_override)
-	return csg
-
-func create_circle(center: Array, radius: float, segments: int = 32) -> CSGPolygon3D:
-	print("[DEBUG] create_circle center=", center, " radius=", radius)
-	var arr: PackedVector2Array = []
-	for i in range(segments):
-		var angle = (TAU / segments) * i
-		var x = center[0] + cos(angle) * radius
-		var y = center[1] + sin(angle) * radius
-		arr.append(Vector2(x, y))
-	arr.append(arr[0])
-	var csg = CSGPolygon3D.new()
-	csg.polygon = arr
-	csg.mode = CSGPolygon3D.MODE_DEPTH
-	csg.depth = 1.0
 	# Adaug CollisionPolygon3D pentru selecție
 	var collision = CollisionPolygon3D.new()
 	collision.polygon = arr
@@ -831,10 +845,6 @@ func _create_snap_preview_marker():
 	snap_preview_marker.visible = false
 	add_child(snap_preview_marker)
 
-func _load_project_json():
-	# Placeholder: poți extinde cu logica de serializare/deserializare proiect 3D
-	# Momentan nu face nimic, dar nu va da eroare la apel
-	pass
 	
 func _select_geometry(obj):
 	# Deselectează geometria precedentă
@@ -956,22 +966,7 @@ func import_all_json_from_folder(folder_path: String):
 							collision.polygon = arr
 							static_body.add_child(obj)
 							static_body.add_child(collision)
-						"CIRCLE":
-							obj = create_circle(entity.center, entity.radius)
-							obj.material_override = mat
-							obj.set_meta("layer_name", layer_name)
-							var arr: PackedVector2Array = []
-							var segments = 32
-							for i in range(segments):
-								var angle = (TAU / segments) * i
-								var x = entity.center[0] + cos(angle) * entity.radius
-								var y = entity.center[1] + sin(angle) * entity.radius
-								arr.append(Vector2(x, y))
-							arr.append(arr[0])
-							var collision = CollisionPolygon3D.new()
-							collision.polygon = arr
-							static_body.add_child(obj)
-							static_body.add_child(collision)
+						
 					if not layer_groups.has(layer_name):
 						var group_node = Node3D.new()
 						group_node.name = layer_name
@@ -1042,45 +1037,3 @@ func populate_tree_with_projects(projects: Dictionary):
 				obj_item.set_metadata(0, child)
 	tree_node.item_selected.connect(_on_tree_item_selected)
 	tree_node.item_edited.connect(_on_tree_item_edited)
-
-# Add UI controls for the section plane
-func _setup_section_plane_controls():
-	# Wrap the VBoxContainer in a Panel to adjust margins
-	var panel = Panel.new()
-	panel.name = "SectionPlaneControls"
-	panel.anchor_left = 0.0
-	panel.anchor_top = 0.0
-	panel.anchor_right = 1.0
-	panel.anchor_bottom = 1.0
-	panel.offset_left = 10
-	panel.offset_top = 500 # Increased top offset to move the panel lower
-	panel.offset_right = -10
-	panel.offset_bottom = -10
-	canvas.add_child(panel)
-
-	var vbox = VBoxContainer.new()
-	panel.add_child(vbox)
-
-	var position_label = Label.new()
-	position_label.text = "Position"
-	vbox.add_child(position_label)
-
-	var position_slider = HSlider.new()
-	position_slider.min_value = -10.0
-	position_slider.max_value = 10.0
-	position_slider.value = 0.0
-	position_slider.step = 0.1
-	position_slider.connect("value_changed", Callable(self, "_on_section_plane_position_changed"))
-	vbox.add_child(position_slider)
-
-	var rotation_label = Label.new()
-	rotation_label.text = "Rotation"
-	vbox.add_child(rotation_label)
-
-	var rotation_slider = HSlider.new()
-	rotation_slider.min_value = -180.0
-	rotation_slider.max_value = 180.0
-	rotation_slider.value = 0.0
-	rotation_slider.step = 1.0
-	rotation_slider.connect("value_changed", Callable(self, "_on_section_plane_rotation_changed"))
-	vbox.add_child(rotation_slider)

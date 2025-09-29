@@ -1,7 +1,7 @@
-
 import ezdxf
 import json
 import sys
+import time
 
 class DXFtoJSONConverter:
     def __init__(self, dxf_path, json_path):
@@ -9,11 +9,14 @@ class DXFtoJSONConverter:
         self.json_path = json_path
 
     def convert(self):
+        print(f"[DEBUG] Start DXF to JSON: {self.dxf_path} -> {self.json_path}")
+        start_time = time.time()
         doc = ezdxf.readfile(self.dxf_path)
         msp = doc.modelspace()
         entities = []
-        for e in msp:
+        for idx, e in enumerate(msp):
             ent_type = e.dxftype()
+            print(f"[DEBUG] Entity {idx}: type={ent_type}, handle={getattr(e.dxf, 'handle', None)}, layer={getattr(e.dxf, 'layer', None)}")
             ent = {
                 "type": ent_type,
                 "handle": e.dxf.handle,
@@ -33,8 +36,8 @@ class DXFtoJSONConverter:
                         data = e.get_xdata(appid)
                         if data:
                             xdata[appid] = [(code, value) for code, value in data]
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        print(f"[DEBUG] XDATA error for appid {appid}: {ex}")
             if xdata:
                 ent["xdata"] = xdata
 
@@ -80,9 +83,13 @@ class DXFtoJSONConverter:
                 ent["scale"] = [e.dxf.xscale, e.dxf.yscale] if hasattr(e.dxf, "xscale") else [1, 1]
                 ent["layer"] = e.dxf.layer
             entities.append(ent)
-
+            if idx % 10 == 0:
+                print(f"[DEBUG] Processed {idx+1} entities...")
+        print(f"[DEBUG] Total entities: {len(entities)}")
         with open(self.json_path, "w", encoding="utf-8") as f:
             json.dump(entities, f, indent=2, default=str)
+        elapsed = time.time() - start_time
+        print(f"[DEBUG] Finished DXF to JSON in {elapsed:.2f} seconds.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

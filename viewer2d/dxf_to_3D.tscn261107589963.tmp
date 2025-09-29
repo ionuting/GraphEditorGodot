@@ -4,6 +4,14 @@
 
 [node name="Node3D" type="Node3D"]
 script = ExtResource("1_n7kv7")
+grid_size = null
+grid_spacing = null
+grid_color = null
+background_color = null
+z_min = null
+z_max = null
+drawing_plane_z = null
+zoom_speed = null
 
 [node name="Camera3D" type="Camera3D" parent="."]
 
