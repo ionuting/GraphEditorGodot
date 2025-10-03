@@ -42,6 +42,15 @@ var layer_materials := {}
 var imported_projects := {}
 
 func _ready():
+	# Adaugă o lumină direcțională pentru evidențierea voidurilor
+	var dir_light = DirectionalLight3D.new()
+	dir_light.light_color = Color(1, 1, 0.95)
+
+	dir_light.shadow_enabled = true
+	dir_light.shadow_bias = 0.05
+
+	dir_light.transform.origin = Vector3(0, 10, 10)
+	add_child(dir_light)
 	if canvas == null:
 		var cl = CanvasLayer.new()
 		add_child(cl)
@@ -54,11 +63,18 @@ func _ready():
 
 	# Încarcă config materiale layere
 	var config_path = "res://layer_materials.json"
+
 	if FileAccess.file_exists(config_path):
 		var config_str = FileAccess.get_file_as_string(config_path)
 		var config_data = JSON.parse_string(config_str)
 		if typeof(config_data) == TYPE_DICTIONARY:
 			layer_materials = config_data
+
+	# Normalizează structura layer_materials (acceptă și array direct din CSV/JSON)
+	for k in layer_materials.keys():
+		var v = layer_materials[k]
+		if v is Array and v.size() == 4:
+			layer_materials[k] = {"color": [v[0], v[1], v[2]], "alpha": v[3]}
 
 	_set_top_view()
 
@@ -75,461 +91,123 @@ func _ready():
 	_update_camera_clipping()
 	_create_snap_preview_marker()
 
- # (dezactivat) Importă toate fișierele JSON valide din folder la pornire
- # import_all_json_from_folder("res://json_folder")
-
-
-	# Example usage: Apply the section plane to all objects
-	var objects = get_tree().get_nodes_in_group("geometry")
+	# Conectează semnale pentru Tree (Objects)
+	var tree_node = get_node_or_null("Objects")
+	if tree_node:
+		tree_node.connect("item_selected", Callable(self, "_on_tree_item_selected"))
+		tree_node.connect("item_edited", Callable(self, "_on_tree_item_edited"))
 
 	# Integrare LoadDxfBtn
 	var load_btn = $CanvasLayer/LoadDxfBtn if has_node("CanvasLayer/LoadDxfBtn") else null
 	if load_btn:
-		print("[DEBUG] LoadDxfBtn found, connecting pressed signal.")
 		load_btn.pressed.connect(_on_load_dxf_btn_pressed)
-	else:
-		print("[DEBUG] LoadDxfBtn NOT found!")
+		# Creează FileDialog pentru selectare folder dacă nu există
+		if not has_node("CanvasLayer/DxfFolderDialog"):
+			var file_dialog = FileDialog.new()
+			file_dialog.name = "DxfFolderDialog"
+			file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+			file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+			file_dialog.connect("dir_selected", Callable(self, "_on_dxf_folder_selected"))
+			$CanvasLayer.add_child(file_dialog)
+	
+	# Watchdog pentru monitorizarea automată a fișierelor DXF
+	_setup_dxf_watchdog()
 
-	# Creează FileDialog pentru selectare folder
-	if not has_node("CanvasLayer/DxfFolderDialog"):
-		var file_dialog = FileDialog.new()
-		file_dialog.name = "DxfFolderDialog"
-		file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-		file_dialog.mode = FileDialog.FILE_MODE_OPEN_ANY
-		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-		file_dialog.connect("dir_selected", Callable(self, "_on_dxf_folder_selected"))
-		$CanvasLayer.add_child(file_dialog)
-		print("[DEBUG] DxfFolderDialog created and added to CanvasLayer.")
-	else:
-		print("[DEBUG] DxfFolderDialog already exists.")
-
+# === DXF to GLB batch import ===
 func _on_load_dxf_btn_pressed():
 	var file_dialog = $CanvasLayer.get_node("DxfFolderDialog")
 	if file_dialog:
-		print("[DEBUG] Showing DxfFolderDialog.")
-		# Setează folderul curent la ultima cale folosită sau la root-ul proiectului
-		if ProjectSettings.has_setting("dxf_last_folder"):
-			file_dialog.current_dir = ProjectSettings.get_setting("dxf_last_folder")
-		else:
-			file_dialog.current_dir = ProjectSettings.globalize_path("res://")
 		file_dialog.popup_centered()
 	else:
-		print("[DEBUG] DxfFolderDialog not found!")
+		push_error("DxfFolderDialog not found!")
 
-
-# Asigură-te că această funcție este la nivel global, nu în interiorul altei funcții sau clase
 func _on_dxf_folder_selected(dir_path):
 	print("[DEBUG] Folder selectat:", dir_path)
-	ProjectSettings.set_setting("dxf_last_folder", dir_path)
 	var dir = DirAccess.open(dir_path)
 	if dir:
 		dir.list_dir_begin()
 		var file_name = dir.get_next()
-		var imported_combiners := {}
+		var glb_paths = []
 		while file_name != "":
 			if not dir.current_is_dir() and file_name.to_lower().ends_with(".dxf"):
 				var dxf_path = dir_path + "/" + file_name
-				var json_path = dir_path + "/" + file_name.get_basename() + ".json"
-				print("[DEBUG] Converting ", dxf_path, " to ", json_path)
-				var exit_code = _run_python_dxf_to_json(dxf_path, json_path)
-				print("[DEBUG] Importing JSON: ", json_path)
-				if exit_code == 0 and FileAccess.file_exists(json_path):
-					var combiner = await import_dxf_entities_csg_combiner(json_path)
-					if combiner:
-						imported_combiners[file_name.get_basename()] = combiner
+				var glb_path = dir_path + "/" + file_name.get_basename() + ".glb"
+				print("[DEBUG] Converting ", dxf_path, " to ", glb_path)
+				_run_python_dxf_to_glb(dxf_path, glb_path)
+				if FileAccess.file_exists(glb_path):
+					glb_paths.append(glb_path)
 			file_name = dir.get_next()
 		dir.list_dir_end()
-		# Populează arborele (tree) cu combinerele importate
-		if imported_combiners.size() > 0:
-			populate_tree_with_projects_csg(imported_combiners)
+		# Încarcă toate GLB-urile rezultate
+		_load_glb_meshes(glb_paths)
 
-func _run_python_dxf_to_json(dxf_path: String, json_path: String):
-	var script_path = "python/dxf_to_json.py"
-	var args = [script_path, dxf_path, json_path]
+func _run_python_dxf_to_glb(dxf_path: String, glb_path: String):
+	var script_path = "python/dxf_to_glb_trimesh.py"
+	var args = [script_path, dxf_path, glb_path]
 	var output = []
-	print("[DEBUG] Running Python script with arguments: python ", args)
+	print("[DEBUG] Running Python: python ", args)
 	var exit_code = OS.execute("python", args, output, true)
-	print("[DEBUG] Python script output:", output)
-	print("[DEBUG] Python script exit code:", exit_code)
-
-	if exit_code != 0:
-		push_error("Python script failed with exit code %d. Check the script and input files." % exit_code)
-		for line in output:
-			print("[PYTHON ERROR]", line)
+	print("[PYTHON OUTPUT]", output)
+	print("[PYTHON EXIT CODE]", exit_code)
 	return exit_code
 
 
-func import_dxf_entities_csg_combiner(path: String) -> CSGCombiner3D:
-	print("[DEBUG] Importing DXF from path:", path)
-	if not FileAccess.file_exists(path):
-		push_error("File does not exist: %s" % path)
-		return null
+func _load_glb_meshes(glb_paths: Array):
+	for glb_path in glb_paths:
+		if FileAccess.file_exists(glb_path):
+			var packed_scene = ResourceLoader.load(glb_path)
+			if packed_scene and packed_scene is PackedScene:
+				var scene = packed_scene.instantiate()
+				add_child(scene)
+				print("[DEBUG] Loaded GLTF/GLB scene: ", glb_path)
+				_print_meshes_and_colors(scene, glb_path)
+			else:
+				print("[ERROR] GLTF/GLB import failed (not PackedScene): ", glb_path)
+		else:
+			print("[ERROR] GLTF/GLB file not found: ", glb_path)
+	# Populează tree-ul după import
+	populate_tree_with_projects(imported_projects)
 
-	var json_str = FileAccess.get_file_as_string(path).strip_edges(true, true)
-	print("[DEBUG] JSON string loaded from file (first 100 chars):", json_str.substr(0, 100), "...")
 
-	var data = JSON.parse_string(json_str)
-	if data == null:
-		push_error("Failed to parse JSON. Check the file format.")
-		return null
-	if typeof(data) != TYPE_ARRAY:
-		push_error("JSON data is not an array. Check the file content.")
-		return null
+# Debug: Recursiv, afișează numele meshurilor și culoarea vertex principal (dacă există)
+func _print_meshes_and_colors(node: Node, glb_path: String):
 
-	print("[DEBUG] JSON data parsed successfully. Number of entities:", data.size())
-
-	var combiner = CSGCombiner3D.new()
-	combiner.name = path.get_file().get_basename() + "_combiner"
-	var union_solids := []
-	var subtraction_solids := []
-
-	var batch_size = 200
-	var entity_count = 0
-	for entity in data:
-		if not entity.has("type"):
-			continue
-		if not entity.has("points") and entity.type in ["LWPOLYLINE"]:
-			continue
-
-		var mat: StandardMaterial3D = null
+	if node is MeshInstance3D and node.mesh:
+		var mesh_name = node.name
+		var mesh = node.mesh
+		var color_str = "-"
 		var layer_name = "default"
-		var is_void_layer = false
-		var height = 1.0
-		var z = 0.0
-
-		if entity.has("layer"):
-			layer_name = str(entity.layer)
-		if layer_name == "void":
-			is_void_layer = true
-		if layer_materials.has(layer_name):
-			var lconf = layer_materials[layer_name]
-			mat = StandardMaterial3D.new()
-			mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+		# Extrage IfcType (prima parte a numelui meshului, până la _)
+		if mesh_name.find("_") > 0:
+			layer_name = mesh_name.split("_")[0]
+		var element_name = mesh_name.substr(mesh_name.find("_") + 1) if mesh_name.find("_") > 0 else mesh_name
+		# Mapare insensibilă la majuscule/minuscule și fallback la 'default'
+		var found_layer = ""
+		for k in layer_materials.keys():
+			if k.to_lower() == layer_name.to_lower():
+				found_layer = k
+				break
+		if found_layer == "":
+			found_layer = "default"
+		var lconf = layer_materials[found_layer]
+		var mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+		if lconf["alpha"] < 1.0:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		node.material_override = mat
+		color_str = str(mat.albedo_color)
+		# Debug print pentru fiecare obiect încărcat
+		print("[DEBUG] SCENE LOAD: %s | Mesh: %s | Layer: %s | Alpha: %.2f | Visible: %s | Pos: %s" % [glb_path, mesh_name, found_layer, lconf["alpha"], str(node.visible), str(node.transform.origin)])
 
+		# --- Populare structură pentru tree ---
+		if not imported_projects.has(glb_path):
+			imported_projects[glb_path] = {}
+		if not imported_projects[glb_path].has(layer_name):
+			imported_projects[glb_path][layer_name] = {}
+		imported_projects[glb_path][layer_name][mesh_name] = node
 
-		else:
-			mat = default_material
-
-
-		var csg = CSGPolygon3D.new()
-		match entity.type:
-			"LWPOLYLINE":
-				if entity.has("xdata") and entity.xdata.has("QCAD"):
-					for item in entity.xdata["QCAD"]:
-						if typeof(item) == TYPE_ARRAY and item.size() == 2:
-							var val = str(item[1])
-							if val.begins_with("height:"):
-								height = float(val.split(":")[1])
-							elif val.begins_with("z:"):
-								z = float(val.split(":")[1])
-				csg.position.z = z + height
-				var pts := []
-				for p in entity.points:
-					pts.append(Vector2(p[0], p[1]))
-				if entity.closed and pts.size() > 0:
-					pts.append(pts[0])
-				csg.polygon = PackedVector2Array(pts)
-				csg.mode = CSGPolygon3D.MODE_DEPTH
-				csg.depth = height
-				csg.material = mat
-				csg.visible = true
-			"CIRCLE":
-				if entity.has("xdata") and entity.xdata.has("QCAD"):
-					for item in entity.xdata["QCAD"]:
-						if typeof(item) == TYPE_ARRAY and item.size() == 2:
-							var val = str(item[1])
-							if val.begins_with("height:"):
-								height = float(val.split(":")[1])
-							elif val.begins_with("z:"):
-								z = float(val.split(":")[1])
-				var segments = 32
-				var arr: PackedVector2Array = []
-				for i in range(segments):
-					var angle = (TAU / segments) * i
-					var x = entity.center[0] + cos(angle) * entity.radius
-					var y = entity.center[1] + sin(angle) * entity.radius
-					arr.append(Vector2(x, y))
-				arr.append(arr[0])
-				csg.polygon = arr
-				csg.mode = CSGPolygon3D.MODE_DEPTH
-				csg.depth = max(height, 0.01)
-				csg.position.z = z + height
-				csg.material = mat
-				csg.visible = true
-
-		if is_void_layer:
-			csg.operation = CSGPolygon3D.OPERATION_SUBTRACTION
-			subtraction_solids.append(csg)
-		else:
-			csg.operation = CSGPolygon3D.OPERATION_UNION
-			union_solids.append(csg)
-
-		entity_count += 1
-		if entity_count % batch_size == 0:
-			await get_tree().process_frame
-
-	for solid in union_solids:
-		combiner.add_child(solid)
-	for solid in subtraction_solids:
-		combiner.add_child(solid)
-
-	var objects_node = get_node_or_null("Objects")
-	if objects_node:
-		objects_node.add_child(combiner)
-	else:
-		add_child(combiner)
-
-	return combiner
-
-
-# Funcție utilitară comună pentru popularea arborelui
-
-func populate_tree_generic(tree_data: Dictionary, mode: String = "project"):
-	var tree_node = get_node_or_null("Objects")
-	if tree_node == null:
-		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
-		return
-	tree_node.clear()
-	tree_node.set_columns(2)
-	var root = tree_node.create_item()
-	if mode == "project":
-		tree_node.set_column_title(0, "File/CSG/Object")
-	elif mode == "layer":
-		tree_node.set_column_title(0, "Name")
-	else:
-		tree_node.set_column_title(0, "Object")
-	tree_node.set_column_title(1, "Visible")
-	tree_node.set_column_titles_visible(true)
-
-	for key1 in tree_data.keys():
-		var item1 = tree_node.create_item(root)
-		item1.set_text(0, key1)
-		item1.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-		item1.set_checked(1, true)
-		item1.set_editable(1, true)
-		item1.set_metadata(0, tree_data[key1])
-		var node1 = tree_data[key1]
-		var children2 = []
-		if mode == "project":
-			if node1.has_method("get_children"):
-				children2 = node1.get_children()
-		else:
-			if typeof(node1) == TYPE_DICTIONARY:
-				children2 = node1.keys()
-		for key2 in children2:
-			var item2 = tree_node.create_item(item1)
-			var node2 = (mode == "project" and key2 or node1[key2])
-			var label_text = ""
-			if mode == "project":
-				if key2 is Object and key2.has_method("get_name"):
-					label_text = str(key2.name)
-				else:
-					label_text = str(key2)
-			else:
-				label_text = str(key2)
-			item2.set_text(0, label_text)
-			item2.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-			item2.set_checked(1, true)
-			item2.set_editable(1, true)
-			item2.set_metadata(0, node2)
-			var children3 = []
-			if mode == "project":
-				if key2.has_method("get_children"):
-					children3 = key2.get_children()
-			else:
-				if node2.has_method("get_children"):
-					children3 = node2.get_children()
-			for child in children3:
-				var obj_item = tree_node.create_item(item2)
-				var display_name = child.name
-				var entity_data = child.get_meta("entity_data") if child.has_meta("entity_data") else null
-				var name_str = ""; var handle_str = ""
-				if entity_data != null:
-					if entity_data.has("xdata") and entity_data.xdata.has("QCAD"):
-						for item in entity_data.xdata["QCAD"]:
-							if typeof(item) == TYPE_ARRAY and item.size() == 2 and str(item[1]).begins_with("Name:"):
-								name_str = str(item[1]).split(":")[1]
-					if entity_data.has("handle"):
-						handle_str = str(entity_data.handle)
-				if name_str != "" and handle_str != "":
-					display_name = "%s_%s" % [name_str, handle_str]
-				obj_item.set_text(0, display_name)
-				obj_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-				obj_item.set_checked(1, true)
-				obj_item.set_editable(1, true)
-				obj_item.set_metadata(0, child)
-	if not tree_node.is_connected("item_selected", Callable(self, "_on_tree_item_selected")):
-		tree_node.item_selected.connect(_on_tree_item_selected)
-	if not tree_node.is_connected("item_edited", Callable(self, "_on_tree_item_edited")):
-		tree_node.item_edited.connect(_on_tree_item_edited)
-
-func populate_tree_with_projects_csg(projects: Dictionary):
-	populate_tree_generic(projects, "project")
-
-func populate_tree_with_layers(layer_groups: Dictionary):
-	populate_tree_generic(layer_groups, "layer")
-func create_polygon(points: Array, closed: bool, height: float = 1.0, z: float = 0.0) -> CSGPolygon3D:
-	print("[DEBUG] create_polygon points=", points, " closed=", closed, " height=", height, " z=", z)
-	var arr: PackedVector2Array = []
-	for p in points:
-		arr.append(Vector2(p[0], p[1]))
-	if closed:
-		arr.append(Vector2(points[0][0], points[0][1]))
-	var csg = CSGPolygon3D.new()
-	csg.polygon = arr
-	csg.mode = CSGPolygon3D.MODE_DEPTH
-	csg.depth = height
-	csg.transform.origin.z = z + height
-	# Adaug CollisionPolygon3D pentru selecție
-	var collision = CollisionPolygon3D.new()
-	collision.polygon = arr
-	csg.add_child(collision)
-	csg.set_meta("selectable", true)
-	csg.set_meta("original_material", csg.material_override)
-	return csg
-
-# Funcții publice pentru snap
-func set_snap_enabled(enabled: bool):
-	snap_enabled = enabled
-	snap_preview_marker.visible = false
-
-func get_drawing_plane_z() -> float:
-	return drawing_plane_z
-
-# Funcția de snap modificată
-func get_snapped_position(world_pos: Vector3) -> Vector3:
-	if not snap_enabled:
-		return world_pos
-	
-	# Caută în scene tree pentru snap grid panel
-	var main_scene = get_tree().get_first_node_in_group("main")
-	if not main_scene:
-		main_scene = get_node("/root/Main") # fallback
-	
-	if main_scene and main_scene.has_method("get_snap_grid_panel"):
-		var snap_panel = main_scene.get_snap_grid_panel()
-		if snap_panel and snap_panel.has_method("get_snap_point_at"):
-			return snap_panel.get_snap_point_at(world_pos, snap_distance)
-	
-	return world_pos
-
-# UI setup functions (rămân la fel)
-func _setup_ui_buttons():
-	var names = ["TOP","FRONT","LEFT","RIGHT","BACK","FREE 3D"]
-	for i in range(len(names)):
-		var btn = Button.new()
-		btn.text = names[i]
-		btn.position = Vector2(10, 10 + i*35)
-		btn.size = Vector2(100, 30)
-		btn.pressed.connect(Callable(self, "_on_view_button_pressed").bind(names[i]))
-		canvas.add_child(btn)
-
-func _setup_coordinate_label():
-	coord_label = Label.new()
-	coord_label.text = "X: 0.0, Y: 0.0, Z: 0.0"
-	coord_label.position = Vector2(10, get_viewport().get_visible_rect().size.y - 50)
-	coord_label.size = Vector2(300, 30)
-	coord_label.add_theme_color_override("font_color", Color.BLACK)
-	coord_label.add_theme_font_size_override("font_size", 14)
-	canvas.add_child(coord_label)
-
-func _setup_z_controls():
-	z_controls_panel = Panel.new()
-	
-	# Sub butoane (ultimul buton e la y=185 + înălțimea lui 30 = 215)
-	var y_offset = 10 + (6 * 35) + 20  # 6 butoane * 35 px + spațiu
-	z_controls_panel.position = Vector2(10, y_offset)
-	
-	z_controls_panel.size = Vector2(240, 160)
-	z_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
-	canvas.add_child(z_controls_panel)
-
-	# Allow the Z controls panel to be floatable/draggable inside the canvas
-	var z_gui_cb = Callable(self, "_on_z_controls_gui_input")
-	z_controls_panel.gui_input.connect(z_gui_cb)
-	
-	var title_label = Label.new()
-	title_label.text = "Z-Depth Controls"
-	title_label.position = Vector2(10, 5)
-	title_label.add_theme_color_override("font_color", Color.BLACK)
-	title_label.add_theme_font_size_override("font_size", 12)
-	z_controls_panel.add_child(title_label)
-	
-	var z_min_label = Label.new()
-	z_min_label.text = "Z Min:"
-	z_min_label.position = Vector2(10, 30)
-	z_min_label.size = Vector2(50, 20)
-	z_min_label.add_theme_color_override("font_color", Color.BLACK)
-	z_controls_panel.add_child(z_min_label)
-	
-	var z_min_spinbox = SpinBox.new()
-	z_min_spinbox.position = Vector2(65, 30)
-	z_min_spinbox.size = Vector2(80, 20)
-	z_min_spinbox.min_value = -100.0
-	z_min_spinbox.max_value = 100.0
-	z_min_spinbox.step = 0.1
-	z_min_spinbox.value = z_min
-	z_min_spinbox.value_changed.connect(_on_z_min_changed)
-	z_controls_panel.add_child(z_min_spinbox)
-	
-	var z_max_label = Label.new()
-	z_max_label.text = "Z Max:"
-	z_max_label.position = Vector2(10, 55)
-	z_max_label.size = Vector2(50, 20)
-	z_max_label.add_theme_color_override("font_color", Color.BLACK)
-	z_controls_panel.add_child(z_max_label)
-	
-	var z_max_spinbox = SpinBox.new()
-	z_max_spinbox.position = Vector2(65, 55)
-	z_max_spinbox.size = Vector2(80, 20)
-	z_max_spinbox.min_value = -100.0
-	z_max_spinbox.max_value = 100.0
-	z_max_spinbox.step = 0.1
-	z_max_spinbox.value = z_max
-	z_max_spinbox.value_changed.connect(_on_z_max_changed)
-	z_controls_panel.add_child(z_max_spinbox)
-	
-	var draw_z_label = Label.new()
-	draw_z_label.text = "Draw Z:"
-	draw_z_label.position = Vector2(10, 80)
-	draw_z_label.size = Vector2(50, 20)
-	draw_z_label.add_theme_color_override("font_color", Color.BLACK)
-	z_controls_panel.add_child(draw_z_label)
-	
-	var draw_z_spinbox = SpinBox.new()
-	draw_z_spinbox.position = Vector2(65, 80)
-	draw_z_spinbox.size = Vector2(80, 20)
-	draw_z_spinbox.min_value = -100.0
-	draw_z_spinbox.max_value = 100.0
-	draw_z_spinbox.step = 0.1
-	draw_z_spinbox.value = drawing_plane_z
-	draw_z_spinbox.value_changed.connect(_on_drawing_plane_z_changed)
-	z_controls_panel.add_child(draw_z_spinbox)
-	
-	var btn_ground = Button.new()
-	btn_ground.text = "Ground (0)"
-	btn_ground.position = Vector2(10, 155)
-	btn_ground.size = Vector2(70, 25)
-	btn_ground.pressed.connect(_set_ground_level)
-	z_controls_panel.add_child(btn_ground)
-	
-	var btn_floor1 = Button.new()
-	btn_floor1.text = "Floor 1 (3m)"
-	btn_floor1.position = Vector2(135, 155)
-	btn_floor1.size = Vector2(70, 25)
-	btn_floor1.pressed.connect(_set_floor1_level)
-	z_controls_panel.add_child(btn_floor1)
-	
-	var info_label = Label.new()
-	info_label.text = "Visible: %.1f to %.1f" % [z_min, z_max]
-	info_label.position = Vector2(10, 135)
-	info_label.size = Vector2(200, 20)
-	info_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
-	info_label.add_theme_font_size_override("font_size", 10)
-	info_label.name = "info_label"
-	z_controls_panel.add_child(info_label)
-
+	for child in node.get_children():
+		_print_meshes_and_colors(child, glb_path)
 
 func _on_view_button_pressed(view_name: String):
 	match view_name:
@@ -821,14 +499,154 @@ func get_mouse_pos_in_xy() -> Vector3:
 	var result = from + dir * t
 	result.z = drawing_plane_z
 	return result
+				
 
-func _spawn_marker(pos: Vector3):
-	var sphere = MeshInstance3D.new()
-	var s = SphereMesh.new()
-	s.radius = 0.1
-	sphere.mesh = s
-	sphere.transform.origin = Vector3(pos.x, pos.y, drawing_plane_z)
-	add_child(sphere)
+func populate_tree_with_projects(projects: Dictionary):
+	var tree_node = get_node_or_null("Objects")
+	if tree_node == null:
+		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
+		return
+	tree_node.clear()
+	tree_node.set_columns(2)
+	var root = tree_node.create_item()
+	tree_node.set_column_title(0, "GLB File / IfcType / Element")
+	tree_node.set_column_title(1, "Visible")
+	tree_node.set_column_titles_visible(true)
+
+	for file_name in projects.keys():
+		var file_item = tree_node.create_item(root)
+		file_item.set_text(0, file_name)
+		file_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+		file_item.set_checked(1, true)
+		file_item.set_editable(1, true)
+		file_item.set_metadata(0, {"type": "file", "file": file_name})
+
+		var layer_groups = projects[file_name]
+		for layer_group in layer_groups.keys():
+			var group_item = tree_node.create_item(file_item)
+			group_item.set_text(0, layer_group)
+			group_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+			group_item.set_checked(1, true)
+			group_item.set_editable(1, true)
+			group_item.set_metadata(0, {"type": "group", "file": file_name, "group": layer_group})
+
+			var elements = layer_groups[layer_group]
+			for elem_name in elements.keys():
+				var elem_item = tree_node.create_item(group_item)
+				elem_item.set_text(0, elem_name)
+				elem_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
+				elem_item.set_checked(1, true)
+				elem_item.set_editable(1, true)
+				elem_item.set_metadata(0, {"type": "element", "file": file_name, "group": layer_group, "element": elem_name})
+
+# --- Tree select & visibility logic ---
+func _on_tree_item_selected():
+	var tree_node = get_node_or_null("Objects")
+	if not tree_node:
+		return
+	var item = tree_node.get_selected()
+	if not item:
+		return
+	var meta = item.get_metadata(0)
+	if typeof(meta) != TYPE_DICTIONARY:
+		return
+	if meta.has("type") and meta["type"] == "element":
+		var file = meta["file"]
+		var group = meta["group"]
+		var elem = meta["element"]
+		if imported_projects.has(file) and imported_projects[file].has(group) and imported_projects[file][group].has(elem):
+			var node = imported_projects[file][group][elem]
+			_highlight_selected_node(node)
+
+func _highlight_selected_node(node):
+	if not node:
+		return
+	# Reset previous selection
+	if selected_geometry and selected_geometry != node:
+		var mesh_name = selected_geometry.name
+		var layer_name = mesh_name.split("_")[0] if mesh_name.find("_") > 0 else "default"
+		var lconf = layer_materials.has(layer_name) if layer_materials.has(layer_name) else layer_materials["default"]
+		var mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+		if lconf["alpha"] < 1.0:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		selected_geometry.material_override = mat
+	# Highlight new selection
+	selected_geometry = node
+	var sel_mat = StandardMaterial3D.new()
+	sel_mat.albedo_color = Color.YELLOW
+	selected_geometry.material_override = sel_mat
+
+func _on_tree_item_edited():
+	var tree_node = get_node_or_null("Objects")
+	if not tree_node:
+		return
+	var edited = tree_node.get_edited()
+	if not edited:
+		return
+	var meta = edited.get_metadata(0)
+	if typeof(meta) != TYPE_DICTIONARY:
+		return
+	var checked = edited.is_checked(1)
+	if meta.has("type"):
+		match meta["type"]:
+			"file":
+				_set_visibility_file(meta["file"], checked)
+			"group":
+				_set_visibility_group(meta["file"], meta["group"], checked)
+			"element":
+				_set_visibility_element(meta["file"], meta["group"], meta["element"], checked)
+
+func _set_visibility_file(file, visible):
+	if imported_projects.has(file):
+		for group in imported_projects[file].keys():
+			_set_visibility_group(file, group, visible)
+
+func _set_visibility_group(file, group, visible):
+	if imported_projects.has(file) and imported_projects[file].has(group):
+		for elem in imported_projects[file][group].keys():
+			_set_visibility_element(file, group, elem, visible)
+
+func _set_visibility_element(file, group, elem, visible):
+	if imported_projects.has(file) and imported_projects[file].has(group) and imported_projects[file][group].has(elem):
+		var node = imported_projects[file][group][elem]
+		if node:
+			node.visible = visible
+
+	
+func _setup_ui_buttons():
+	# Creează butoane de view preset
+	var names = ["TOP","FRONT","LEFT","RIGHT","BACK","FREE 3D"]
+	for i in range(len(names)):
+		var btn = Button.new()
+		btn.text = names[i]
+		btn.position = Vector2(10, 10 + i*35)
+		btn.size = Vector2(100, 30)
+		btn.pressed.connect(Callable(self, "_on_view_button_pressed").bind(names[i]))
+		canvas.add_child(btn)
+
+func _setup_coordinate_label():
+	coord_label = Label.new()
+	coord_label.text = "X: 0.0, Y: 0.0, Z: 0.0"
+	coord_label.position = Vector2(10, get_viewport().get_visible_rect().size.y - 50)
+	coord_label.size = Vector2(300, 30)
+	coord_label.add_theme_color_override("font_color", Color.BLACK)
+	coord_label.add_theme_font_size_override("font_size", 14)
+	canvas.add_child(coord_label)
+
+func _setup_z_controls():
+	z_controls_panel = Panel.new()
+	var y_offset = 10 + (6 * 35) + 20
+	z_controls_panel.position = Vector2(10, y_offset)
+	z_controls_panel.size = Vector2(240, 160)
+	z_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
+	canvas.add_child(z_controls_panel)
+	var title_label = Label.new()
+	title_label.text = "Z-Depth Controls"
+	title_label.position = Vector2(10, 5)
+	title_label.add_theme_color_override("font_color", Color.BLACK)
+	title_label.add_theme_font_size_override("font_size", 12)
+	z_controls_panel.add_child(title_label)
 
 func _create_snap_preview_marker():
 	snap_preview_marker = MeshInstance3D.new()
@@ -845,195 +663,109 @@ func _create_snap_preview_marker():
 	snap_preview_marker.visible = false
 	add_child(snap_preview_marker)
 
+func get_snapped_position(world_pos: Vector3) -> Vector3:
+	# Snap logic placeholder (return world_pos direct dacă nu ai snap grid)
+	return world_pos
+
+# === DXF Watchdog System ===
+var watchdog_timer: Timer
+var signal_file_path: String = "reload_signal.json"
+var last_signal_timestamp: float = 0.0
+var watchdog_process: int = -1
+
+func _setup_dxf_watchdog():
+	# Creează timer pentru verificarea signal file-ului
+	watchdog_timer = Timer.new()
+	watchdog_timer.wait_time = 1.0  # Verifică în fiecare secundă
+	watchdog_timer.timeout.connect(_check_reload_signal)
+	watchdog_timer.autostart = true
+	add_child(watchdog_timer)
 	
-func _select_geometry(obj):
-	# Deselectează geometria precedentă
-	if selected_geometry:
-		var prev_csg = selected_geometry.get_child(0) if selected_geometry.get_child_count() > 0 else null
-		if prev_csg and prev_csg.has_method("set"):
-			var layer_name = prev_csg.get_meta("layer_name") if prev_csg.has_meta("layer_name") else "default"
-			var mat = default_material
-			if layer_materials.has(layer_name):
-				var lconf = layer_materials[layer_name]
-				mat = StandardMaterial3D.new()
-				mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
-				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			prev_csg.material_override = mat
-	selected_geometry = obj
-	var sel_mat = StandardMaterial3D.new()
-	sel_mat.albedo_color = Color.YELLOW
-	var csg = selected_geometry.get_child(0) if selected_geometry.get_child_count() > 0 else null
-	if csg and csg.has_method("set"):
-		csg.material_override = sel_mat
+	# Pornește procesul Python watchdog în background
+	_start_python_watchdog()
 
-func _on_tree_item_selected():
-	var tree_node = get_node_or_null("Objects")
-	if tree_node == null:
+func _start_python_watchdog():
+	var script_path = "python/dxf_watchdog.py"
+	var args = [script_path]
+	print("[DEBUG] Starting DXF watchdog process...")
+	
+	# Pornește procesul în background (non-blocking)
+	watchdog_process = OS.create_process("python", args, false)
+	if watchdog_process > 0:
+		print("[DEBUG] DXF watchdog started with PID: ", watchdog_process)
+	else:
+		print("[ERROR] Failed to start DXF watchdog")
+
+func _check_reload_signal():
+	if not FileAccess.file_exists(signal_file_path):
 		return
-	var selected_item = tree_node.get_selected()
-	if selected_item == null:
+	
+	var file = FileAccess.open(signal_file_path, FileAccess.READ)
+	if not file:
 		return
-	var node_ref = selected_item.get_metadata(0)
-	if node_ref and node_ref is Node3D:
-		# If node_ref is a group (layer), select all its children
-		if node_ref.get_child_count() > 0 and node_ref is Node3D and not node_ref.has_meta("entity_data"):
-			for child in node_ref.get_children():
-				if child is Node3D and child.has_meta("entity_data"):
-					_select_geometry(child)
-		# If node_ref is a geometry node, select it
-		elif node_ref.has_meta("entity_data"):
-			_select_geometry(node_ref)
-
-func _on_tree_item_edited():
-	var tree_node = get_node_or_null("Objects")
-	if tree_node == null:
+	
+	var json_str = file.get_as_text()
+	file.close()
+	
+	var json = JSON.new()
+	var parse_result = json.parse(json_str)
+	if parse_result != OK:
 		return
-	var edited_item = tree_node.get_edited()
-	if edited_item == null:
+	
+	var signal_data = json.data
+	if typeof(signal_data) != TYPE_DICTIONARY:
 		return
-	var node_ref = edited_item.get_metadata(0)
-	var visible = edited_item.is_checked(1)
-	if node_ref and node_ref is Node3D:
-		node_ref.visible = visible
-	# Propagă vizibilitatea și starea checkbox la toți descendenții din arbore
-	_set_tree_children_visible_and_checked(edited_item, visible)
+	
+	var timestamp = signal_data.get("timestamp", 0.0)
+	if timestamp > last_signal_timestamp:
+		last_signal_timestamp = timestamp
+		var glb_file = signal_data.get("glb_file", "")
+		var dxf_file = signal_data.get("dxf_file", "")
+		
+		print("[DEBUG] Watchdog signal received: reloading ", glb_file)
+		_reload_single_glb(glb_file, dxf_file)
 
-# Propagă recursiv vizibilitatea și starea checkbox la toți descendenții unui TreeItem
-func _set_tree_children_visible_and_checked(tree_item: TreeItem, visible: bool):
-	var child = tree_item.get_first_child()
-	while child:
-		child.set_checked(1, visible)
-		var node_ref = child.get_metadata(0)
-		if node_ref and node_ref is Node3D:
-			node_ref.visible = visible
-		_set_tree_children_visible_and_checked(child, visible)
-		child = child.get_next()
-
-func import_all_json_from_folder(folder_path: String):
-	var dir = DirAccess.open(folder_path)
-	if dir == null:
-		push_error("Nu pot deschide folderul: %s" % folder_path)
+func _reload_single_glb(glb_path: String, dxf_path: String):
+	if not FileAccess.file_exists(glb_path):
+		print("[ERROR] GLB file not found for reload: ", glb_path)
 		return
-	var projects := {}
-	dir.list_dir_begin()
-	var file_name = dir.get_next()
-	while file_name != "":
-		if not dir.current_is_dir() and file_name.ends_with(".json"):
-			var file_path = folder_path + "/" + file_name
-			var json_str = FileAccess.get_file_as_string(file_path).strip_edges(true, true)
-			var data = JSON.parse_string(json_str)
-			if typeof(data) == TYPE_ARRAY and data.size() > 0 and data[0].has("type"):
-				print("[DEBUG] Import din: ", file_path)
-				# Build layer_groups for this file
-				var layer_groups := {}
-				for entity in data:
-					var mat: StandardMaterial3D = null
-					var layer_name = "default"
-					if entity.has("layer"):
-						layer_name = str(entity.layer)
-					if layer_materials.has(layer_name):
-						var lconf = layer_materials[layer_name]
-						mat = StandardMaterial3D.new()
-						mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
-						mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-					else:
-						mat = default_material
-					var static_body = StaticBody3D.new()
-					static_body.set_meta("selectable", true)
-					static_body.set_meta("entity_data", entity)
-					var obj: Node3D = null
-					match entity.type:
-						"LWPOLYLINE":
-							var height = 1.0
-							var z = 0.0
-							if entity.has("xdata") and entity.xdata.has("QCAD"):
-								for item in entity.xdata["QCAD"]:
-									if typeof(item) == TYPE_ARRAY and item.size() == 2:
-										var val = str(item[1])
-										if val.begins_with("height:"):
-											height = float(val.split(":")[1])
-										elif val.begins_with("z:"):
-											z = float(val.split(":")[1])
-							obj = create_polygon(entity.points, entity.closed, height, z)
-							obj.material_override = mat
-							obj.set_meta("layer_name", layer_name)
-							var arr: PackedVector2Array = []
-							for p in entity.points:
-								arr.append(Vector2(p[0], p[1]))
-							if entity.closed:
-								arr.append(Vector2(entity.points[0][0], entity.points[0][1]))
-							var collision = CollisionPolygon3D.new()
-							collision.polygon = arr
-							static_body.add_child(obj)
-							static_body.add_child(collision)
-						
-					if not layer_groups.has(layer_name):
-						var group_node = Node3D.new()
-						group_node.name = layer_name
-						layer_groups[layer_name] = group_node
-					layer_groups[layer_name].add_child(static_body)
-				# Add layer_groups for this file
-				projects[file_name] = layer_groups
-				# Add to scene
-				var objects_node = get_node_or_null("Objects")
-				if objects_node:
-					for k in layer_groups.keys():
-						objects_node.add_child(layer_groups[k])
-			else:
-				print("[DEBUG] Fisier ignorat (schema invalidă): ", file_path)
-		file_name = dir.get_next()
-	dir.list_dir_end()
-	# Build Tree with project browser
-	populate_tree_with_projects(projects)
+	
+	# Elimină mesh-urile existente pentru acest fișier
+	var filename = glb_path.get_file().get_basename()
+	_remove_existing_meshes_for_file(filename)
+	
+	# Încarcă noul GLB
+	var packed_scene = ResourceLoader.load(glb_path)
+	if packed_scene and packed_scene is PackedScene:
+		var scene = packed_scene.instantiate()
+		add_child(scene)
+		print("[DEBUG] Reloaded GLB scene: ", glb_path)
+		_print_meshes_and_colors(scene, glb_path)
+		
+		# Actualizează structura de proiecte
+		populate_tree_with_projects(imported_projects)
+	else:
+		print("[ERROR] Failed to reload GLB: ", glb_path)
 
-func populate_tree_with_projects(projects: Dictionary):
-	var tree_node = get_node_or_null("Objects")
-	if tree_node == null:
-		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
-		return
-	tree_node.clear()
-	tree_node.set_columns(2)
-	var root = tree_node.create_item()
-	tree_node.set_column_title(0, "File/Layer/Object")
-	tree_node.set_column_title(1, "Visible")
+func _remove_existing_meshes_for_file(filename: String):
+	# Elimină din imported_projects
+	var keys_to_remove = []
+	for key in imported_projects.keys():
+		if key.contains(filename):
+			keys_to_remove.append(key)
+	
+	for key in keys_to_remove:
+		# Elimină nodurile din scenă
+		for layer in imported_projects[key].values():
+			for mesh_node in layer.values():
+				if mesh_node and is_instance_valid(mesh_node):
+					mesh_node.queue_free()
+		imported_projects.erase(key)
+	
+	print("[DEBUG] Removed existing meshes for file: ", filename)
 
-	tree_node.set_column_titles_visible(true)
-
-	for file_name in projects.keys():
-		var file_item = tree_node.create_item(root)
-		file_item.set_text(0, file_name)
-		file_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-		file_item.set_checked(1, true)
-		file_item.set_editable(1, true)
-		# Optionally store file reference
-		file_item.set_metadata(0, file_name)
-		var layer_groups = projects[file_name]
-		for layer_name in layer_groups.keys():
-			var layer_item = tree_node.create_item(file_item)
-			layer_item.set_text(0, layer_name)
-			layer_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-			layer_item.set_checked(1, true)
-			layer_item.set_editable(1, true)
-			layer_item.set_metadata(0, layer_groups[layer_name])
-			var group_node = layer_groups[layer_name]
-			for child in group_node.get_children():
-				var obj_item = tree_node.create_item(layer_item)
-				var display_name = child.name
-				var entity_data = child.get_meta("entity_data") if child.has_meta("entity_data") else null
-				var name_str = ""; var handle_str = ""
-				if entity_data != null:
-					if entity_data.has("xdata") and entity_data.xdata.has("QCAD"):
-						for item in entity_data.xdata["QCAD"]:
-							if typeof(item) == TYPE_ARRAY and item.size() == 2 and str(item[1]).begins_with("Name:"):
-								name_str = str(item[1]).split(":")[1]
-					if entity_data.has("handle"):
-						handle_str = str(entity_data.handle)
-				if name_str != "" and handle_str != "":
-					display_name = "%s_%s" % [name_str, handle_str]
-				obj_item.set_text(0, display_name)
-				obj_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
-				obj_item.set_checked(1, true)
-				obj_item.set_editable(1, true)
-				obj_item.set_metadata(0, child)
-	tree_node.item_selected.connect(_on_tree_item_selected)
-	tree_node.item_edited.connect(_on_tree_item_edited)
+func _exit_tree():
+	# Oprește procesul watchdog la ieșire
+	if watchdog_process > 0:
+		OS.kill(watchdog_process)
+		print("[DEBUG] Stopped DXF watchdog process")

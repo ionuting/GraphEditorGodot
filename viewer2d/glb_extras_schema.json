@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GLB Node Extras Metadata Schema",
+  "description": "Schema for custom extras metadata attached to GLB nodes exported from DXF.",
+  "type": "object",
+  "properties": {
+    "uuid": {
+      "type": "string",
+      "description": "Universally unique identifier for the mesh."
+    },
+    "handle": {
+      "type": ["string", "null"],
+      "description": "DXF handle for the entity, if available."
+    },
+    "layer": {
+      "type": "string",
+      "description": "Layer name from which the mesh was generated."
+    },
+    "name": {
+      "type": "string",
+      "description": "Mesh name, typically Layer_Name_Index."
+    }
+  },
+  "required": ["uuid", "layer", "name"],
+  "additionalProperties": false
+}

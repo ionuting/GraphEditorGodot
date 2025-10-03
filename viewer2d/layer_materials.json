@@ -1,30 +1,30 @@
 {
-  "Rooms": {
-    "color": [0.0, 0.3, 1.0],
-    "alpha": 1.0
+  "IfcSpace": {
+	"color": [0.0, 0.3, 1.0],
+	"alpha": 1.0
   },
   "default": {
-    "color": [0.5, 1.0, 0.0],
-    "alpha": 1.0
+	"color": [0.5, 1.0, 0.0],
+	"alpha": 1.0
   },
-  "column": {
-    "color": [0.0, 0.0, 0.0],
-    "alpha": 1.0
+  "IfcColumn": {
+	"color": [0.0, 0.0, 0.0],
+	"alpha": 1.0
   },
-  "beam": {
-    "color": [0.0, 0.0, 0.0],
-    "alpha": 1.0
+  "IfcBeam": {
+	"color": [0.0, 0.0, 0.0],
+	"alpha": 1.0
   },
-  "slab": {
-    "color": [0.0, 0.0, 0.0],
-    "alpha": 0.5
+  "IfcSlab": {
+	"color": [0.0, 0.0, 0.0],
+	"alpha": 0.5
   },
   "void": {
-    "color": [0.0, 0.0, 0.0],
-    "alpha": 0.1
+	"color": [0.0, 0.0, 0.0],
+	"alpha": 0.1
   },
-  "proxy": {
-    "color": [0.5, 1.0, 0.5],
-    "alpha": 0.5
+  "IfcProxy": {
+	"color": [0.1, 0.5, 0.5],
+	"alpha": 1.0
   }
 }
