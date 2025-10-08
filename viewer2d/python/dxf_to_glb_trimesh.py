@@ -6,34 +6,233 @@ from shapely.geometry import Polygon
 import uuid
 import sys
 import time
-import csv
-import ast
+import json
 import os
+import re
 from trimesh.exchange import gltf
 
+# Import pentru conversia IFC în background
+try:
+    from ifc_background_converter import (
+        create_background_converter, 
+        process_xdata_for_element,
+        IfcBackgroundConverter
+    )
+    IFC_CONVERSION_AVAILABLE = True
+    print("[DEBUG] IFC Background Converter disponibil")
+except ImportError as e:
+    print(f"[WARNING] IFC Background Converter indisponibil: {e}")
+    IFC_CONVERSION_AVAILABLE = False
+
+# Import pentru conversia IFC bazată pe GLB
+try:
+    from ifc_glb_converter import convert_glb_to_ifc
+    IFC_GLB_CONVERSION_AVAILABLE = True
+    print("[DEBUG] IFC GLB Converter disponibil")
+except ImportError as e:
+    print(f"[WARNING] IFC GLB Converter indisponibil: {e}")
+    IFC_GLB_CONVERSION_AVAILABLE = False
+
 # -----------------------------
-# Materiale din CSV
+# Evaluare formule matematice
 # -----------------------------
-def load_layer_materials(csv_path):
+def evaluate_math_formula(formula_str):
+    """
+    Evaluează o formulă matematică de tip '=2.1*0.9+1.2*1.2'
+    Returnează valoarea calculată sau 0.0 în caz de eroare.
+    """
+    if not formula_str or not isinstance(formula_str, str):
+        return 0.0
+    
+    # Elimină spațiile și semnul '=' de la început
+    formula = formula_str.strip()
+    if formula.startswith('='):
+        formula = formula[1:]
+    
+    # Verifică că formula conține doar caractere sigure pentru evaluare matematică
+    # Permite doar cifre, puncte, +, -, *, /, paranteze și spații
+    if not re.match(r'^[\d\.\+\-\*\/\(\)\s]+$', formula):
+        print(f"[DEBUG] Opening_area formula contains invalid characters: {formula_str}")
+        return 0.0
+    
+    try:
+        # Evaluează formula într-un context restricționat
+        result = eval(formula, {"__builtins__": {}}, {})
+        if isinstance(result, (int, float)):
+            print(f"[DEBUG] Opening_area formula evaluated: '{formula_str}' = {result}")
+            return float(result)
+        else:
+            print(f"[DEBUG] Opening_area formula does not return a number: {formula_str}")
+            return 0.0
+    except Exception as e:
+        print(f"[DEBUG] Eroare la evaluarea formulei Opening_area '{formula_str}': {e}")
+        return 0.0
+
+# -----------------------------
+# Materiale din JSON
+# -----------------------------
+def load_layer_materials(json_path):
     materials = {}
-    if not os.path.exists(csv_path):
+    if not os.path.exists(json_path):
         return materials
-    with open(csv_path, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            color = ast.literal_eval(row['color'])
-            alpha = float(row['alpha'])
-            materials[row['layer']] = color + [alpha]
+    with open(json_path, 'r', encoding='utf-8') as jsonfile:
+        data = json.load(jsonfile)
+        for layer, config in data.items():
+            if isinstance(config, dict) and 'color' in config and 'alpha' in config:
+                # Format JSON: {"color": [r, g, b], "alpha": a}
+                materials[layer] = config['color'] + [config['alpha']]
+            elif isinstance(config, list) and len(config) == 4:
+                # Format direct array: [r, g, b, a]
+                materials[layer] = config
     return materials
 
 LAYER_MATERIALS = load_layer_materials(
-    os.path.join(os.path.dirname(__file__), "../layer_materials.csv")
+    os.path.join(os.path.dirname(__file__), "../layer_materials.json")
 )
 
 def get_material(layer):
     if layer in LAYER_MATERIALS:
         return LAYER_MATERIALS[layer]
     return LAYER_MATERIALS.get("default", [0.5, 1.0, 0.0, 1.0])
+
+# -----------------------------
+# Funcții pentru control spațial cu cercuri
+# -----------------------------
+def read_control_circles(doc, layer="control"):
+    """Citește cercurile de control cu Z din XDATA pentru formele spațiale."""
+    msp = doc.modelspace()
+    control_points = []
+
+    circles = list(msp.query(f"CIRCLE[layer=='{layer}']"))
+    print(f"[DEBUG] Cercuri de control gasite pe layer '{layer}': {len(circles)}")
+
+    for c in circles:
+        x, y = float(c.dxf.center[0]), float(c.dxf.center[1])
+        z_value = 0.0
+
+        if c.has_xdata:
+            try:
+                xdata = c.get_xdata("QCAD")
+                for code, value in xdata:
+                    if code == 1000 and isinstance(value, str) and value.startswith("z:"):
+                        z_value = float(value.split(":")[1])
+            except Exception as e:
+                print(f"[DEBUG] Eroare XDATA pentru cerc de control ({x:.2f}, {y:.2f}): {e}")
+
+        control_points.append((x, y, z_value))
+        print(f"[DEBUG] Cerc de control ({x:.2f}, {y:.2f}) -> z={z_value}")
+
+    return control_points
+
+def get_z_at_point_from_controls(control_points, x, y):
+    """
+    Calculează Z pentru un punct (x,y) folosind interpolarea din cercurile de control.
+    Folosește distanța inversă ponderată (inverse distance weighting).
+    """
+    if not control_points:
+        return 0.0
+    
+    if len(control_points) == 1:
+        return control_points[0][2]
+    
+    # Calculează distanțele la toate cercurile de control
+    distances = []
+    weights = []
+    
+    for cx, cy, cz in control_points:
+        dist = np.sqrt((x - cx)**2 + (y - cy)**2)
+        
+        # Dacă punctul este foarte aproape de un cerc de control, returnează Z-ul lui
+        if dist < 1e-6:
+            return cz
+        
+        distances.append(dist)
+        weights.append(1.0 / (dist**2))  # Pondere inversă cu distanța la pătrat
+    
+    # Interpolarea ponderată
+    total_weight = sum(weights)
+    weighted_z = sum(w * control_points[i][2] for i, w in enumerate(weights))
+    
+    return weighted_z / total_weight
+
+def create_spatial_mesh_from_contour(points, control_points, height):
+    """
+    Creează un mesh spațial din conturul 2D folosind cercurile de control pentru Z.
+    
+    Args:
+        points: lista de puncte (x, y) care definesc conturul
+        control_points: lista de cercuri de control (x, y, z)
+        height: înălțimea extrudării
+    
+    Returns:
+        mesh rezultat sau None dacă nu se poate crea
+    """
+    if len(points) < 3:
+        return None
+    
+    try:
+        # Calculează Z pentru fiecare punct din contur
+        base_vertices_3d = []
+        for x, y in points:
+            z = get_z_at_point_from_controls(control_points, x, y)
+            base_vertices_3d.append([x, y, z])
+        
+        base_vertices_3d = np.array(base_vertices_3d)
+        
+        # Pentru control_points, extrudarea se face pe axa Z globală (verticală)
+        normal = np.array([0, 0, 1])  # Axa Z globală
+        
+        # Creează vârfurile de sus prin extrudarea pe axa Z globală
+        top_vertices_3d = base_vertices_3d + height * normal
+        
+        # Combină toate vârfurile
+        all_vertices = np.vstack([base_vertices_3d, top_vertices_3d])
+        num_points = len(points)
+        
+        # Creează fețele
+        faces = []
+        
+        # Triangulează poligonul de bază și de sus (triangulare în ventilator)
+        if num_points > 3:
+            # Fața de jos (poligonul de bază)
+            for i in range(1, num_points - 1):
+                faces.append([0, i + 1, i])
+            
+            # Fața de sus (poligonul extrudat) - orientare inversă
+            for i in range(1, num_points - 1):
+                faces.append([num_points, num_points + i, num_points + i + 1])
+        else:
+            # Pentru triunghiuri
+            faces.append([0, 2, 1])  # Fața de jos
+            faces.append([num_points, num_points + 1, num_points + 2])  # Fața de sus
+        
+        # Fețele laterale
+        for i in range(num_points):
+            next_i = (i + 1) % num_points
+            # Două triunghiuri pentru fiecare latură
+            faces.append([i, next_i, next_i + num_points])
+            faces.append([i, next_i + num_points, i + num_points])
+        
+        # Creează mesh-ul
+        mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+        
+        # Verifică și repară mesh-ul
+        try:
+            if not mesh.is_watertight:
+                print(f"[DEBUG] Mesh spatial nu este watertight, incerc repararea...")
+            mesh.fix_normals()
+        except Exception as ex:
+            print(f"[DEBUG] Avertisment validare mesh spatial: {ex}")
+        
+        base_z_avg = np.mean(base_vertices_3d[:, 2])
+        top_z_avg = np.mean(top_vertices_3d[:, 2])
+        print(f"[DEBUG] Mesh spatial creat: vertices={len(all_vertices)}, faces={len(faces)}, Z_base_avg={base_z_avg:.2f}, Z_top_avg={top_z_avg:.2f}")
+        
+        return mesh
+        
+    except Exception as ex:
+        print(f"[DEBUG] Crearea mesh-ului spatial a esuat: {ex}")
+        return None
 
 # -----------------------------
 # Funcții pentru arce
@@ -170,8 +369,155 @@ def polyline_to_points(entity, arc_segments=16):
 # -----------------------------
 # Funcții pentru rotația în jurul primului segment
 # -----------------------------
+
+def is_special_angle(angle_degrees):
+    """
+    Verifică dacă unghiul este unul dintre unghiurile speciale: 90°, 180°, 270°
+    Pentru aceste unghiuri se folosește rotația 3D directă, nu proiecția pe plan.
+    """
+    # Normalizează unghiul în intervalul [0, 360)
+    normalized_angle = angle_degrees % 360
+    
+    # Lista unghiurilor speciale
+    special_angles = [90, 180, 270]
+    
+    # Verifică cu toleranță pentru erori de float
+    for special in special_angles:
+        if abs(normalized_angle - special) < 1e-6:
+            return True
+    
+    return False
+
+def create_projected_rotated_mesh(points, height, angle_degrees):
+    """
+    Creează un mesh prin proiectarea conturului pe un plan înclinat și extrudarea pe normala planului.
+    NOUA IMPLEMENTARE: Pentru unghiuri diferite de 90°, 180°, 270°
+    
+    Args:
+        points: lista de puncte (x, y) care definesc poligonul
+        height: înălțimea extrudării
+        angle_degrees: unghiul de rotație în grade în jurul primului segment
+    
+    Returns:
+        mesh rezultat sau None dacă nu se poate crea
+    """
+    if len(points) < 3:
+        return None
+        
+    try:
+        # Primul segment este între punctele 0 și 1
+        p1 = np.array([points[0][0], points[0][1], 0])  # Primul punct
+        p2 = np.array([points[1][0], points[1][1], 0])  # Al doilea punct
+        
+        # Calculează vectorul primului segment
+        segment_vector = p2 - p1
+        segment_length = np.linalg.norm(segment_vector)
+        
+        if segment_length < 1e-6:
+            print(f"[DEBUG] Primul segment prea scurt pentru proiectie: {segment_length}")
+            return None
+        
+        # Normalizează vectorul pentru a obține axa de rotație
+        rotation_axis = segment_vector / segment_length
+        
+        # Convertește unghiul din grade în radiani
+        angle_radians = np.radians(angle_degrees)
+        
+        # Creează matricea de rotație folosind formula Rodriguez
+        cos_angle = np.cos(angle_radians)
+        sin_angle = np.sin(angle_radians)
+        
+        # Matricea antisimetrică pentru vectorul axei
+        axis_cross_matrix = np.array([
+            [0, -rotation_axis[2], rotation_axis[1]],
+            [rotation_axis[2], 0, -rotation_axis[0]],
+            [-rotation_axis[1], rotation_axis[0], 0]
+        ])
+        
+        # Formula Rodriguez pentru matricea de rotație
+        rotation_matrix = (np.eye(3) + 
+                          sin_angle * axis_cross_matrix + 
+                          (1 - cos_angle) * np.dot(axis_cross_matrix, axis_cross_matrix))
+        
+        # Calculează normala planului înclinat
+        # Începem cu normala verticală (0, 0, 1) și o rotim
+        original_normal = np.array([0, 0, 1])
+        inclined_normal = rotation_matrix @ original_normal
+        
+        # PROIECȚIA: Proiectează punctele pe planul înclinat
+        # Pentru fiecare punct, calculează proiecția pe planul care trece prin primul punct
+        projected_points_3d = []
+        
+        for point in points:
+            # Punctul în spațiul 3D
+            point_3d = np.array([point[0], point[1], 0])
+            
+            # Calculează distanța de la punct la planul înclinat
+            # Planul trece prin p1 și are normala inclined_normal
+            to_point = point_3d - p1
+            distance_to_plane = np.dot(to_point, inclined_normal)
+            
+            # Proiectează punctul pe planul înclinat
+            projected_point = point_3d - distance_to_plane * inclined_normal
+            projected_points_3d.append(projected_point)
+        
+        # Creează mesh-ul din punctele proiectate
+        num_points = len(projected_points_3d)
+        
+        # Punctele de bază (pe planul înclinat)
+        base_vertices = np.array(projected_points_3d)
+        
+        # Punctele de sus (extrudate pe direcția normală a planului înclinat)
+        top_vertices = base_vertices + height * inclined_normal
+        
+        # Combină toate vertexurile
+        all_vertices = np.vstack([base_vertices, top_vertices])
+        
+        # Creează fețele folosind triangulare pentru poligoanele de bază și sus
+        faces = []
+        
+        # Triangulează poligonul de bază și de sus
+        if num_points > 3:
+            # Fața de jos (poligonul proiectat) - triangulare în ventilator
+            for i in range(1, num_points - 1):
+                faces.append([0, i + 1, i])  # Orientarea corectă pentru fața de jos
+            
+            # Fața de sus (poligonul extrudat) - triangulare în ventilator
+            for i in range(1, num_points - 1):
+                faces.append([num_points, num_points + i, num_points + i + 1])  # Orientarea corectă pentru fața de sus
+        else:
+            # Pentru triunghiuri, fețele sunt simple
+            faces.append([0, 2, 1])  # Fața de jos
+            faces.append([num_points, num_points + 1, num_points + 2])  # Fața de sus
+        
+        # Fețele laterale - triunghiuri între bază și sus
+        for i in range(num_points):
+            next_i = (i + 1) % num_points
+            # Două triunghiuri pentru fiecare latură
+            faces.append([i, next_i, next_i + num_points])
+            faces.append([i, next_i + num_points, i + num_points])
+        
+        # Creează mesh-ul
+        mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+        
+        # Verifică și repară mesh-ul dacă este necesar
+        try:
+            if not mesh.is_watertight:
+                print(f"[DEBUG] Mesh not watertight dupa proiectia pe planul inclinat")
+            mesh.fix_normals()
+        except Exception as ex:
+            print(f"[DEBUG] Mesh validation warning: {ex}")
+        
+        print(f"[DEBUG] Created projected rotated mesh: angle={angle_degrees}°, projected_normal={inclined_normal}, vertices={len(all_vertices)}, faces={len(faces)}")
+        return mesh
+        
+    except Exception as ex:
+        print(f"[DEBUG] Projected rotated mesh creation failed: {ex}")
+        return None
+
 def create_inclined_mesh(points, height, angle_degrees):
     """
+    FUNCȚIE MENȚINUTĂ PENTRU COMPATIBILITATE
     Creează un mesh prin proiectarea conturului pe un plan înclinat și extrudarea pe normala planului.
     
     Args:
@@ -195,7 +541,7 @@ def create_inclined_mesh(points, height, angle_degrees):
         segment_length = np.linalg.norm(segment_vector)
         
         if segment_length < 1e-6:
-            print(f"[DEBUG] Primul segment prea scurt pentru înclinare: {segment_length}")
+            print(f"[DEBUG] Primul segment prea scurt pentru inclinare: {segment_length}")
             return None
         
         # Normalizează vectorul pentru a obține axa de rotație
@@ -286,7 +632,7 @@ def create_inclined_mesh(points, height, angle_degrees):
         # Verifică și repară mesh-ul dacă este necesar
         try:
             if not mesh.is_watertight:
-                print(f"[DEBUG] Mesh not watertight după proiecția pe planul înclinat")
+                print(f"[DEBUG] Mesh not watertight dupa proiectia pe planul inclinat")
             mesh.fix_normals()
         except Exception as ex:
             print(f"[DEBUG] Mesh validation warning: {ex}")
@@ -297,6 +643,165 @@ def create_inclined_mesh(points, height, angle_degrees):
     except Exception as ex:
         print(f"[DEBUG] Inclined mesh creation failed: {ex}")
         return None
+
+def create_rotated_90_mesh(points, height):
+    """
+    Rotește poligonul cu 90° în jurul primului segment și extrudează pe normala feței rotite.
+    
+    Args:
+        points: lista de puncte (x, y) care definesc poligonul
+        height: înălțimea extrudării
+    
+    Returns:
+        mesh rezultat sau None dacă nu se poate crea
+    """
+    if len(points) < 3:
+        return None
+        
+    try:
+        # Primul segment este între punctele 0 și 1
+        p1 = np.array([points[0][0], points[0][1], 0])  # Primul punct
+        p2 = np.array([points[1][0], points[1][1], 0])  # Al doilea punct
+        
+        # Calculează vectorul primului segment (axa de rotație)
+        segment_vector = p2 - p1
+        segment_length = np.linalg.norm(segment_vector)
+        
+        if segment_length < 1e-6:
+            print(f"[DEBUG] Primul segment prea scurt pentru rotatie 90°: {segment_length}")
+            return None
+        
+        # Normalizează vectorul pentru a obține axa de rotație
+        rotation_axis = segment_vector / segment_length
+        
+        # Rotație fixă de 90° (π/2 radiani)
+        angle_radians = np.pi / 2
+        
+        # Creează matricea de rotație folosind formula Rodriguez pentru 90°
+        cos_angle = np.cos(angle_radians)  # cos(90°) = 0
+        sin_angle = np.sin(angle_radians)  # sin(90°) = 1
+        
+        # Matricea antisimetrică pentru vectorul axei
+        axis_cross_matrix = np.array([
+            [0, -rotation_axis[2], rotation_axis[1]],
+            [rotation_axis[2], 0, -rotation_axis[0]],
+            [-rotation_axis[1], rotation_axis[0], 0]
+        ])
+        
+        # Formula Rodriguez pentru matricea de rotație cu 90°
+        rotation_matrix = (np.eye(3) + 
+                          sin_angle * axis_cross_matrix + 
+                          (1 - cos_angle) * np.dot(axis_cross_matrix, axis_cross_matrix))
+        
+        # Rotește toate punctele în jurul primului segment
+        rotated_points_3d = []
+        
+        for point in points:
+            # Punctul în spațiul 3D
+            point_3d = np.array([point[0], point[1], 0])
+            
+            # Translează punctul la origine (relativ la p1)
+            translated_point = point_3d - p1
+            
+            # Aplică rotația
+            rotated_point = rotation_matrix @ translated_point
+            
+            # Translează înapoi
+            final_point = rotated_point + p1
+            rotated_points_3d.append(final_point)
+        
+        # Calculează normala feței rotite folosind primele 3 puncte
+        if len(rotated_points_3d) >= 3:
+            v1 = rotated_points_3d[1] - rotated_points_3d[0]
+            v2 = rotated_points_3d[2] - rotated_points_3d[0]
+            face_normal = np.cross(v1, v2)
+            face_normal_length = np.linalg.norm(face_normal)
+            
+            if face_normal_length > 1e-6:
+                face_normal = face_normal / face_normal_length
+            else:
+                face_normal = np.array([0, 0, 1])  # Fallback
+        else:
+            face_normal = np.array([0, 0, 1])
+        
+        # Punctele de bază (pe fața rotită)
+        base_vertices = np.array(rotated_points_3d)
+        
+        # Punctele de sus (extrudate pe direcția normalei feței rotite)
+        top_vertices = base_vertices + height * face_normal
+        
+        # Combină toate vertexurile
+        all_vertices = np.vstack([base_vertices, top_vertices])
+        num_points = len(points)
+        
+        # Creează fețele folosind aceeași logică ca în create_inclined_mesh
+        faces = []
+        
+        # Triangulează poligonul de bază și de sus
+        if num_points > 3:
+            # Fața de jos (poligonul rotit) - triangulare în ventilator
+            for i in range(1, num_points - 1):
+                faces.append([0, i + 1, i])  # Orientarea corectă pentru fața de jos
+            
+            # Fața de sus (poligonul extrudat) - triangulare în ventilator
+            for i in range(1, num_points - 1):
+                faces.append([num_points, num_points + i, num_points + i + 1])  # Orientarea corectă pentru fața de sus
+        else:
+            # Pentru triunghiuri, fețele sunt simple
+            faces.append([0, 2, 1])  # Fața de jos
+            faces.append([num_points, num_points + 1, num_points + 2])  # Fața de sus
+        
+        # Fețele laterale - triunghiuri între bază și sus
+        for i in range(num_points):
+            next_i = (i + 1) % num_points
+            # Două triunghiuri pentru fiecare latură
+            faces.append([i, next_i, next_i + num_points])
+            faces.append([i, next_i + num_points, i + num_points])
+        
+        # Creează mesh-ul
+        mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+        
+        # Verifică și repară mesh-ul dacă este necesar
+        try:
+            if not mesh.is_watertight:
+                print(f"[DEBUG] Mesh 90° rotit nu este watertight, incerc repararea...")
+            mesh.fix_normals()
+        except Exception as ex:
+            print(f"[DEBUG] Mesh 90° validation warning: {ex}")
+        
+        print(f"[DEBUG] Created 90° rotated mesh: normal={face_normal}, vertices={len(all_vertices)}, faces={len(faces)}")
+        return mesh
+        
+    except Exception as ex:
+        print(f"[DEBUG] 90° rotated mesh creation failed: {ex}")
+        return None
+
+def create_angle_based_mesh(points, height, angle_degrees):
+    """
+    Creează mesh bazat pe tipul unghiului:
+    - Pentru 90°, 180°, 270°: folosește rotația 3D directă (funcția existentă)
+    - Pentru alte unghiuri: folosește proiecția pe planul rotit (noua implementare)
+    
+    Args:
+        points: lista de puncte (x, y) care definesc poligonul
+        height: înălțimea extrudării  
+        angle_degrees: unghiul de rotație în grade
+    
+    Returns:
+        mesh rezultat sau None dacă nu se poate crea
+    """
+    if len(points) < 3:
+        return None
+    
+    # Verifică dacă unghiul este special (90°, 180°, 270°)
+    if is_special_angle(angle_degrees):
+        print(f"[DEBUG] Unghi special {angle_degrees}° - folosesc rotatia 3D directa")
+        # Pentru unghiurile speciale, folosește implementarea existentă create_inclined_mesh
+        return create_inclined_mesh(points, height, angle_degrees)
+    else:
+        print(f"[DEBUG] Unghi arbitrar {angle_degrees}° - folosesc proiectia pe planul rotit")
+        # Pentru unghiurile arbitrare, folosește noua implementare cu proiecție
+        return create_projected_rotated_mesh(points, height, angle_degrees)
 
 # -----------------------------
 # Funcții pentru tăierea elementelor la acoperiș
@@ -329,9 +834,15 @@ def trim_elements_to_roof(solids, mapping):
             print(f"[DEBUG] Found roof element: {mesh.metadata.get('name', 'unknown')} on layer {layer}")
         
         # Identifică elementele structurale care trebuie tăiate
-        elif layer in ["IfcWall", "IfcCovering", "IfcColumn"]:
+        # REGULA: IfcColumn și IfcBeam NU se taie de plăci/acoperișuri, doar de alte coloane/grinzi cu solid:0
+        elif layer in ["IfcWall", "IfcCovering"]:
             structural_elements.append(mesh)
             print(f"[DEBUG] Found structural element to trim: {mesh.metadata.get('name', 'unknown')} on layer {layer}")
+        
+        # IfcColumn și IfcBeam nu se trimit la structural trimming
+        elif layer in ["IfcColumn", "IfcBeam"]:
+            other_elements.append(mesh)
+            print(f"[DEBUG] IfcColumn/IfcBeam preserved from trimming: {mesh.metadata.get('name', 'unknown')} on layer {layer}")
         
         else:
             other_elements.append(mesh)
@@ -423,6 +934,10 @@ def trim_elements_to_roof(solids, mapping):
             updated_entry = dict(struct_entry)
             if intersections_found:
                 updated_entry["trimmed_to_roof"] = True
+                # Recalculează volumul după tăierea la acoperiș
+                if hasattr(final_mesh, 'volume') and final_mesh.volume > 0:
+                    updated_entry["volume"] = float(final_mesh.volume)
+                    print(f"[DEBUG] Volume updated after roof trimming: {updated_entry['mesh_name']} = {final_mesh.volume:.3f}m³")
             updated_mapping.append(updated_entry)
     
     # Combină toate elementele: acoperișuri + structurale tăiate + altele
@@ -489,7 +1004,7 @@ def apply_xyz_rotations(mesh, rotate_x, rotate_y, rotate_z=0.0):
 # -----------------------------
 def process_block_geometry(doc, block_layout, insert_point, rotation_angle, 
                           scale_x, scale_y, scale_z, layer, insert_handle,
-                          insert_xdata, mesh_name_count, mapping, solids, voids):
+                          insert_xdata, mesh_name_count, mapping, solids, voids, control_points=None):
     """
     Procesează geometria dintr-un bloc DXF cu rotația în jurul punctului de inserție.
     
@@ -513,6 +1028,7 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
         rotate_x_global = 0.0
         rotate_y_global = 0.0
         z_global = 0.0
+        block_solid_flag = 1  # Implicit solid, doar dacă e explicit 0 devine void
         
         for appid_data in xdata_dict.values():
             for code, value in appid_data:
@@ -533,13 +1049,23 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                             z_global = float(sval.split(":")[1])
                         except Exception:
                             pass
+                    elif sval.startswith("solid:"):
+                        try:
+                            block_solid_flag = int(sval.split(":")[1])
+                        except Exception:
+                            pass
         
-        return rotate_x_global, rotate_y_global, z_global
+        return rotate_x_global, rotate_y_global, z_global, block_solid_flag
     
-    rotate_x_global, rotate_y_global, z_global = parse_insert_xdata(insert_xdata)
+    rotate_x_global, rotate_y_global, z_global, block_solid_flag = parse_insert_xdata(insert_xdata)
     
     if abs(rotate_x_global) > 1e-6 or abs(rotate_y_global) > 1e-6:
         print(f"[DEBUG] Block global rotations: X={rotate_x_global:.1f}°, Y={rotate_y_global:.1f}°")
+    
+    # Determină dacă blocul în ansamblu este solid sau void
+    block_is_void = (block_solid_flag == 0)
+    if block_is_void:
+        print(f"[DEBUG] Block configured as VOID (solid:0) - will cut IfcWall and IfcCovering")
     
     # Punctul de origine pentru rotații (punctul de inserție cu Z global)
     rotation_origin = np.array([insert_point.x, insert_point.y, z_global])
@@ -574,6 +1100,8 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
             name_str = ""  # Numele elementului
             solid_flag = 1  # Solid/void flag
             angle = 0.0  # Unghiul planului înclinat
+            rotate90 = False  # Rotația cu 90° în jurul primului segment
+            opening_area_formula = ""  # Formula pentru Opening_area (pentru IfcSpace)
             
             for code, value in xdata_list:
                 if code == 1000:
@@ -595,10 +1123,17 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                             angle = float(sval.split(":")[1])
                         except Exception:
                             pass
+                    elif sval.startswith("rotate90:"):
+                        try:
+                            rotate90 = bool(int(sval.split(":")[1]))
+                        except Exception:
+                            pass
+                    elif sval.startswith("Opening_area:"):
+                        opening_area_formula = sval.split(":", 1)[1].strip()
             
-            return height, name_str, solid_flag, angle
+            return height, name_str, solid_flag, angle, rotate90, opening_area_formula
         
-        height, name_str, solid_flag, angle = parse_entity_xdata(
+        height, name_str, solid_flag, angle, rotate90, opening_area_formula = parse_entity_xdata(
             entity_xdata.get("QCAD", [])
         )
         
@@ -637,9 +1172,15 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
             if closed and len(points) >= 3:
                 poly = Polygon(points)
                 if poly.is_valid and poly.area > 0:
-                    # Extrudare
-                    if abs(angle) > 1e-6:
-                        mesh = create_inclined_mesh(points, height, angle)
+                    # Folosește formele spațiale dacă avem cercuri de control
+                    if control_points and len(control_points) > 0:
+                        print(f"[DEBUG] Creeaza mesh spatial in bloc cu {len(control_points)} cercuri de control")
+                        mesh = create_spatial_mesh_from_contour(points, control_points, height)
+                    elif rotate90:
+                        print(f"[DEBUG] Creeaza mesh 90° rotit in bloc")
+                        mesh = create_rotated_90_mesh(points, height)
+                    elif abs(angle) > 1e-6:
+                        mesh = create_angle_based_mesh(points, height, angle)
                     else:
                         mesh = extrude_polygon(poly, height)
                     
@@ -649,8 +1190,14 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                             scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                             mesh.apply_transform(scale_matrix)
                         
-                        # Translație la poziția globală (punctul de inserție + Z global)
-                        mesh.apply_translation([insert_point.x, insert_point.y, z_global])
+                        # Translație la poziția globală
+                        # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
+                        z_position = z_global
+                        if "IfcColumn" in ifc_type:
+                            z_position = 0.0  # Coloanele încep de la sol
+                            print(f"[DEBUG] Coloana LWPOLYLINE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
+                        
+                        mesh.apply_translation([insert_point.x, insert_point.y, z_position])
                         
                         # Rotația blocului în jurul axei Z (din DXF)
                         if abs(rotation_angle) > 1e-6:
@@ -673,8 +1220,11 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 poly = Polygon(points)
                 if poly.is_valid and poly.area > 0:
                     # Extrudare
-                    if abs(angle) > 1e-6:
-                        mesh = create_inclined_mesh(points, height, angle)
+                    if rotate90:
+                        print(f"[DEBUG] Creeaza mesh 90° rotit POLYLINE in bloc")
+                        mesh = create_rotated_90_mesh(points, height)
+                    elif abs(angle) > 1e-6:
+                        mesh = create_angle_based_mesh(points, height, angle)
                     else:
                         mesh = extrude_polygon(poly, height)
                     
@@ -684,8 +1234,14 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                             scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                             mesh.apply_transform(scale_matrix)
                         
-                        # Translație la poziția globală (punctul de inserție + Z global)
-                        mesh.apply_translation([insert_point.x, insert_point.y, z_global])
+                        # Translație la poziția globală
+                        # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
+                        z_position = z_global
+                        if "IfcColumn" in ifc_type:
+                            z_position = 0.0  # Coloanele încep de la sol
+                            print(f"[DEBUG] Coloana POLYLINE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
+                        
+                        mesh.apply_translation([insert_point.x, insert_point.y, z_position])
                         
                         # Rotația blocului în jurul axei Z (din DXF)
                         if abs(rotation_angle) > 1e-6:
@@ -726,8 +1282,14 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                         scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                         mesh.apply_transform(scale_matrix)
                     
-                    # Translație la poziția globală (punctul de inserție + Z global)
-                    mesh.apply_translation([insert_point.x, insert_point.y, z_global])
+                    # Translație la poziția globală
+                    # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
+                    z_position = z_global
+                    if "IfcColumn" in ifc_type:
+                        z_position = 0.0  # Coloanele încep de la sol
+                        print(f"[DEBUG] Coloana CIRCLE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
+                    
+                    mesh.apply_translation([insert_point.x, insert_point.y, z_position])
                     
                     # Rotația blocului în jurul axei Z (din DXF)
                     if abs(rotation_angle) > 1e-6:
@@ -753,18 +1315,29 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 "role": 0 if solid_flag == 0 else 1  # 0 = void, 1 = solid
             }
             
-            # Setează culorile pe baza materialului componentei
+            # Setează culorile pe baza materialului componentei (NU pe layer-ul blocului)
             color = rgba[:3]
             alpha = rgba[3]
             rgba_float = np.array(color + [alpha], dtype=np.float32)
             mesh.visual.vertex_colors = np.tile(rgba_float, (len(mesh.vertices), 1))
+            
+            # Creează material cu nume descriptiv pentru identificare în Godot
+            material_name = f"Material_{component_layer}_{mesh_name}"
+            
             mesh.visual.material = trimesh.visual.material.PBRMaterial(
-                baseColorFactor=[1.0, 1.0, 1.0, alpha],
+                name=material_name,  # Nume descriptiv cu layer și mesh name
+                baseColorFactor=[color[0], color[1], color[2], alpha],  # Culoare directă în material
                 vertex_color=True,
                 alphaMode="BLEND" if alpha < 1.0 else "OPAQUE"
             )
             
-            print(f"[DEBUG] Block mesh colors: {mesh_name} | material_layer={component_layer} | color={color} alpha={alpha}")
+            # Stochează informații despre material în metadata pentru persistență
+            mesh.metadata["material_color"] = color
+            mesh.metadata["material_alpha"] = alpha
+            mesh.metadata["material_rgba"] = rgba_float
+            
+            print(f"[DEBUG] Block mesh colors: {mesh_name} | component_layer={component_layer} | block_layer={layer} | color={color} alpha={alpha}")
+            print(f"[DEBUG] Material source: component ({component_layer}) NOT block ({layer})")
             
             # Calculează proprietățile geometrice
             if len(points) >= 3:
@@ -776,6 +1349,13 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 area = float(Polygon(points).area) if len(points) >= 3 else 0.0
                 lateral_area = perimeter * height
                 volume = area * height
+                
+                # Pentru IfcSpace, scade Opening_area din lateral_area dacă este specificată
+                if ifc_type == "IfcSpace" and opening_area_formula:
+                    opening_area_value = evaluate_math_formula(opening_area_formula)
+                    if opening_area_value > 0:
+                        lateral_area = max(0.0, lateral_area - opening_area_value)
+                        print(f"[DEBUG] IfcSpace {mesh_name}: lateral_area adjusted with Opening_area={opening_area_value:.2f}, final lateral_area={lateral_area:.2f}")
             else:
                 segment_lengths = []
                 perimeter = 0.0
@@ -790,6 +1370,7 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 "uuid": mesh_uuid,
                 "role": 0 if solid_flag == 0 else 1,
                 "solid_flag": solid_flag,
+                "layer": component_layer,  # Layer-ul componentei pentru material (IMPORTANT!)
                 "ifc_type": ifc_type,  # IfcType din layer-ul blocului (IfcWindow, IfcDoor, etc.)
                 "component_layer": component_layer,  # Layer-ul componentei pentru material
                 "material_layer": component_layer,  # Layer-ul pentru maparea materialului
@@ -840,10 +1421,16 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
         block_voids = []
         
         for mesh in block_meshes:
-            if mesh.metadata.get("solid_flag", 1) == 0:
+            mesh_name = mesh.metadata.get("name", "unknown")
+            component_layer = mesh.metadata.get("component_layer", "unknown")
+            solid_flag = mesh.metadata.get("solid_flag", 1)
+            
+            if solid_flag == 0:
                 block_voids.append(mesh)
+                print(f"[DEBUG] Block void: {mesh_name} on layer {component_layer}")
             else:
                 block_solids.append(mesh)
+                print(f"[DEBUG] Block solid: {mesh_name} on layer {component_layer}")
         
         print(f"[DEBUG] Block boolean processing: {len(block_solids)} solids, {len(block_voids)} voids")
         
@@ -853,11 +1440,27 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
         for solid_mesh in block_solids:
             current_mesh = solid_mesh
             solid_uuid = solid_mesh.metadata.get("uuid")
+            solid_layer = solid_mesh.metadata.get("component_layer", "")
             cutting_voids = []
             
-            # Aplică toate void-urile din bloc la acest solid
+            # Aplică doar void-urile compatibile la acest solid
             for void_mesh in block_voids:
                 void_uuid = void_mesh.metadata.get("uuid")
+                void_layer = void_mesh.metadata.get("component_layer", "")
+                
+                # Logica de compatibilitate: void-urile de lemn taie doar solidurile de lemn
+                # Panourile de sticlă (glass) nu sunt tăiate de void-urile de lemn (wood)
+                compatible = False
+                if void_layer == "wood" and solid_layer == "wood":
+                    compatible = True  # Void-urile de lemn taie rama de lemn
+                elif void_layer == solid_layer:
+                    compatible = True  # Void-urile taie același material
+                # Panourile de sticlă rămân intacte față de void-urile de lemn
+                
+                if not compatible:
+                    print(f"[DEBUG] Skipping incompatible void: {void_layer} void won't cut {solid_layer} solid")
+                    continue
+                
                 try:
                     # Verifică intersecția bounding box
                     bb_intersect = not (
@@ -879,9 +1482,35 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                                 if diff_result and hasattr(diff_result, 'vertices') and len(diff_result.vertices) > 0:
                                     # Păstrează metadata originală
                                     diff_result.metadata = dict(current_mesh.metadata)
+                                    
+                                    # Păstrează proprietățile vizuale (material și culori) din metadata
+                                    if "material_rgba" in current_mesh.metadata:
+                                        # Recuperează culorile originale din metadata
+                                        original_rgba = current_mesh.metadata["material_rgba"]
+                                        original_color = current_mesh.metadata["material_color"]
+                                        original_alpha = current_mesh.metadata["material_alpha"]
+                                        
+                                        # Re-aplică materialul la mesh-ul rezultat
+                                        if len(diff_result.vertices) > 0:
+                                            diff_result.visual.vertex_colors = np.tile(original_rgba, (len(diff_result.vertices), 1))
+                                            diff_result.visual.material = trimesh.visual.material.PBRMaterial(
+                                                baseColorFactor=[1.0, 1.0, 1.0, original_alpha],
+                                                vertex_color=True,
+                                                alphaMode="BLEND" if original_alpha < 1.0 else "OPAQUE"
+                                            )
+                                            
+                                            # Păstrează informațiile despre material în noul mesh
+                                            diff_result.metadata["material_color"] = original_color
+                                            diff_result.metadata["material_alpha"] = original_alpha
+                                            diff_result.metadata["material_rgba"] = original_rgba
+                                            
+                                            print(f"[DEBUG] Material restored after boolean: {diff_result.metadata.get('layer', 'unknown')} - color={original_color}")
+                                    else:
+                                        print(f"[DEBUG] Warning: No material metadata found for {current_mesh.metadata.get('name', 'unknown')}")
+                                    
                                     current_mesh = diff_result
                                     cutting_voids.append(void_uuid)
-                                    print(f"[DEBUG] Block void {void_uuid} cut solid {solid_uuid}")
+                                    print(f"[DEBUG] Block void {void_uuid} cut solid {solid_uuid} - preserved material: {current_mesh.metadata.get('layer', 'unknown')}")
                                 else:
                                     print(f"[DEBUG] Block void {void_uuid} completely removed solid {solid_uuid}")
                                     current_mesh = None
@@ -897,9 +1526,16 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 mapping_entry = current_mesh.metadata.get("mapping_entry")
                 if mapping_entry:
                     mapping_entry["is_cut_by"] = cutting_voids
+                    # Recalculează volumul după operațiile boolean
+                    if hasattr(current_mesh, 'volume') and current_mesh.volume > 0:
+                        mapping_entry["volume"] = float(current_mesh.volume)
+                        print(f"[DEBUG] Block volume updated after boolean: {mapping_entry['mesh_name']} = {current_mesh.volume:.3f}m³")
                     mapping.append(mapping_entry)
                 
                 final_block_meshes.append(current_mesh)
+                print(f"[DEBUG] Block solid processed: {current_mesh.metadata.get('name')} on layer {solid_layer} - cut by {len(cutting_voids)} voids")
+            else:
+                print(f"[DEBUG] Block solid completely removed: {solid_mesh.metadata.get('name')} on layer {solid_layer}")
         
         # Adaugă și mesh-urile void separate (pentru debug/vizualizare)
         for void_mesh in block_voids:
@@ -908,12 +1544,138 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 mapping.append(mapping_entry)
             # Nu adăugăm void-urile la solids - ele doar taie
         
-        # Adaugă mesh-urile finale la listele globale
-        for mesh in final_block_meshes:
-            solids.append(mesh)
-            print(f"[DEBUG] Final block mesh: {mesh.metadata.get('name')} | vertices={len(mesh.vertices)}")
+        # Verifică dacă blocul poate tăia solidele existente
+        block_cutting_voids = []
         
-        print(f"[DEBUG] Block processing complete: {len(final_block_meshes)} final meshes")
+        # Dacă blocul întreg este void (solid:0), toate mesh-urile sale devin cutting voids
+        if block_is_void:
+            # Toate mesh-urile finale din bloc devin cutting voids
+            for mesh in final_block_meshes:
+                block_cutting_voids.append(mesh)
+                print(f"[DEBUG] Block as VOID: {mesh.metadata.get('name')} will cut IfcWall/IfcCovering")
+        else:
+            # Logica originală: doar void-urile individuale cu rotații XYZ
+            for void_mesh in block_voids:
+                # Verifică dacă void-ul are rotații XYZ și poate tăia IfcWall/IfcCovering
+                has_xyz_rotations = (abs(final_rotate_x) > 1e-6 or abs(final_rotate_y) > 1e-6)
+                if has_xyz_rotations and void_mesh.metadata.get("solid_flag", 1) == 0:
+                    block_cutting_voids.append(void_mesh)
+                    print(f"[DEBUG] Block cutting void identified: {void_mesh.metadata.get('name')} with XYZ rotations")
+        
+        # Aplică void-urile blocului la solidele existente de tip IfcWall și IfcCovering
+        if block_cutting_voids:
+            print(f"[DEBUG] Applying {len(block_cutting_voids)} block cutting voids to existing solids")
+            
+            # Creează o copie a listei de solide pentru iterare sigură
+            solids_to_process = list(solids)
+            
+            for i, existing_solid in enumerate(solids_to_process):
+                # Verifică dacă solidul este de tip IfcWall sau IfcCovering
+                ifc_type = existing_solid.metadata.get("ifc_type", "")
+                if ifc_type not in ["IfcWall", "IfcCovering"]:
+                    continue
+                
+                current_mesh = existing_solid
+                solid_uuid = current_mesh.metadata.get("uuid")
+                cutting_voids = []
+                
+                # Aplică fiecare void de bloc la acest solid
+                for void_mesh in block_cutting_voids:
+                    void_uuid = void_mesh.metadata.get("uuid")
+                    try:
+                        # Verifică intersecția bounding box
+                        bb_intersect = not (
+                            current_mesh.bounds[1][0] < void_mesh.bounds[0][0] or
+                            current_mesh.bounds[0][0] > void_mesh.bounds[1][0] or
+                            current_mesh.bounds[1][1] < void_mesh.bounds[0][1] or
+                            current_mesh.bounds[0][1] > void_mesh.bounds[1][1] or
+                            current_mesh.bounds[1][2] < void_mesh.bounds[0][2] or
+                            current_mesh.bounds[0][2] > void_mesh.bounds[1][2]
+                        )
+                        
+                        if bb_intersect:
+                            try:
+                                # Testează dacă se intersectează efectiv
+                                intersection = current_mesh.intersection(void_mesh)
+                                if intersection and hasattr(intersection, 'volume') and intersection.volume > 1e-6:
+                                    # Aplică operația boolean difference
+                                    diff_result = current_mesh.difference(void_mesh)
+                                    if diff_result and hasattr(diff_result, 'vertices') and len(diff_result.vertices) > 0:
+                                        # Păstrează metadata originală
+                                        diff_result.metadata = dict(current_mesh.metadata)
+                                        current_mesh = diff_result
+                                        cutting_voids.append(void_uuid)
+                                        print(f"[DEBUG] Block void {void_uuid} cut existing {ifc_type} solid {solid_uuid}")
+                                    else:
+                                        print(f"[DEBUG] Block void {void_uuid} completely removed existing {ifc_type} solid {solid_uuid}")
+                                        current_mesh = None
+                                        break
+                            except Exception as ex:
+                                print(f"[DEBUG] Block to existing solid boolean operation failed: {ex}")
+                    except Exception as ex:
+                        print(f"[DEBUG] Block to existing solid bounds check failed: {ex}")
+                
+                # Actualizează solidul în lista principală
+                if current_mesh is not None:
+                    # Actualizează mapping-ul dacă a fost modificat
+                    if cutting_voids:
+                        mapping_entry = current_mesh.metadata.get("mapping_entry")
+                        if mapping_entry:
+                            existing_cuts = mapping_entry.get("is_cut_by", [])
+                            mapping_entry["is_cut_by"] = existing_cuts + cutting_voids
+                            # Recalculează volumul după operațiile boolean cu bloc
+                            if hasattr(current_mesh, 'volume') and current_mesh.volume > 0:
+                                mapping_entry["volume"] = float(current_mesh.volume)
+                                print(f"[DEBUG] Existing solid volume updated after block cutting: {mapping_entry['mesh_name']} = {current_mesh.volume:.3f}m³")
+                    
+                    # Înlocuiește solidul în lista principală
+                    solids[solids.index(existing_solid)] = current_mesh
+                elif existing_solid in solids:
+                    # Elimină solidul complet eliminat
+                    solids.remove(existing_solid)
+                    print(f"[DEBUG] Existing {ifc_type} solid completely removed by block voids")
+
+        # Re-aplică materialele la toate mesh-urile finale pentru a fi sigur
+        for mesh in final_block_meshes:
+            if "material_rgba" in mesh.metadata and len(mesh.vertices) > 0:
+                rgba = mesh.metadata["material_rgba"]
+                color = mesh.metadata["material_color"]
+                alpha = mesh.metadata["material_alpha"]
+                component_layer = mesh.metadata.get("layer", "unknown")
+                
+                # Re-aplică culorile și materialul
+                mesh.visual.vertex_colors = np.tile(rgba, (len(mesh.vertices), 1))
+                mesh.visual.material = trimesh.visual.material.PBRMaterial(
+                    baseColorFactor=[1.0, 1.0, 1.0, alpha],
+                    vertex_color=True,
+                    alphaMode="BLEND" if alpha < 1.0 else "OPAQUE"
+                )
+                print(f"[DEBUG] Material re-applied: {mesh.metadata.get('name')} | layer={component_layer} | color={color}")
+
+        # Adaugă mesh-urile finale ale blocului la listele globale
+        # Dacă blocul este void global, nu-l adăugăm la solids (doar taie)
+        if not block_is_void:
+            for mesh in final_block_meshes:
+                # Pentru mesh-urile care nu au fost tăiate, volumul din mapping este calculat din geometria 2D
+                # dar pentru consistență, verificăm dacă mesh-ul 3D are volum diferit
+                mapping_entry = mesh.metadata.get("mapping_entry")
+                if mapping_entry and hasattr(mesh, 'volume') and mesh.volume > 0:
+                    original_volume = mapping_entry.get("volume", 0.0)
+                    if abs(mesh.volume - original_volume) > 1e-6:
+                        mapping_entry["volume"] = float(mesh.volume)
+                        print(f"[DEBUG] Block mesh volume corrected: {mapping_entry['mesh_name']} = {mesh.volume:.3f}m³")
+                solids.append(mesh)
+                print(f"[DEBUG] Final block mesh: {mesh.metadata.get('name')} | layer={mesh.metadata.get('layer', 'unknown')} | vertices={len(mesh.vertices)}")
+        else:
+            print(f"[DEBUG] Block is VOID - meshes not added to solids (only used for cutting)")
+            # Adaugă totuși mapping entries pentru void-uri
+            for mesh in final_block_meshes:
+                mapping_entry = mesh.metadata.get("mapping_entry")
+                if mapping_entry:
+                    mapping_entry["role"] = 0  # Marchează ca void în mapping
+                    mapping.append(mapping_entry)
+        
+        print(f"[DEBUG] Block processing complete: {len(final_block_meshes)} final meshes, {len(block_cutting_voids)} cutting voids applied to existing solids")
 
 def apply_xyz_rotations_around_point(mesh, rotate_x, rotate_y, rotate_z, point):
     """
@@ -967,6 +1729,14 @@ def export_scene(scene, out_path):
     if not out_path.lower().endswith(".glb"):
         out_path = os.path.splitext(out_path)[0] + ".glb"
 
+    # Force material export - make sure all geometries have materials
+    print(f"[DEBUG] Pre-export material check:")
+    for name, geom in scene.geometry.items():
+        if hasattr(geom.visual, 'material') and geom.visual.material is not None:
+            print(f"  {name}: Material {geom.visual.material.name} | Color {geom.visual.material.baseColorFactor}")
+        else:
+            print(f"  {name}: NO MATERIAL - this will be lost in export!")
+
     glb_bytes = gltf.export_glb(scene)
     with open(out_path, "wb") as f:
         f.write(glb_bytes)
@@ -982,6 +1752,24 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
 
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
+
+    # Inițializează converterul IFC în background
+    ifc_converter = None
+    ifc_output_path = None
+    if IFC_CONVERSION_AVAILABLE:
+        try:
+            # Determină numele proiectului din calea fișierului
+            project_name = os.path.splitext(os.path.basename(dxf_path))[0]
+            ifc_converter = create_background_converter(f"Project_{project_name}")
+            ifc_output_path = os.path.splitext(out_path)[0] + "_auto.ifc"
+            print(f"[DEBUG] IFC Background Converter initialized: {ifc_output_path}")
+        except Exception as e:
+            print(f"[WARNING] Could not initialize IFC converter: {e}")
+            ifc_converter = None
+
+    # Citește cercurile de control pentru formele spațiale
+    control_points = read_control_circles(doc, layer="control")
+    print(f"[DEBUG] Control circles loaded: {len(control_points)}")
 
     solids = []
     voids = []
@@ -1107,7 +1895,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         process_block_geometry(
                             doc, block_layout, insert_point, rotation_angle, 
                             scale_x, scale_y, scale_z, layer, handle, 
-                            xdata, mesh_name_count, mapping, solids, voids
+                            xdata, mesh_name_count, mapping, solids, voids, control_points
                         )
                         continue  # Blocul a fost procesat, trecem la următoarea entitate
                     else:
@@ -1121,8 +1909,10 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
             name_str = ""
             solid_flag = 1  # Implicit solid, doar dacă e explicit setat pe 0 devine void
             angle = 0.0  # Unghiul de rotație în grade (implicit 0)
+            rotate90 = False  # Rotația cu 90° în jurul primului segment
             rotate_x = 0.0  # Rotația în jurul axei X în grade
             rotate_y = 0.0  # Rotația în jurul axei Y în grade
+            opening_area_formula = ""  # Formula pentru Opening_area (pentru IfcSpace)
             for code, value in xdata_list:
                 if code == 1000:
                     sval = str(value)
@@ -1148,6 +1938,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                             angle = float(sval.split(":")[1])
                         except Exception:
                             pass
+                    elif sval.startswith("rotate90:"):
+                        try:
+                            rotate90 = bool(int(sval.split(":")[1]))
+                        except Exception:
+                            pass
                     elif sval.startswith("rotate_x:"):
                         try:
                             rotate_x = float(sval.split(":")[1])
@@ -1158,9 +1953,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                             rotate_y = float(sval.split(":")[1])
                         except Exception:
                             pass
-            return height, z, name_str, solid_flag, angle, rotate_x, rotate_y
+                    elif sval.startswith("Opening_area:"):
+                        opening_area_formula = sval.split(":", 1)[1].strip()
+            return height, z, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula
 
-        height, z, name_str, solid_flag, angle, rotate_x, rotate_y = parse_xdata_from_list(xdata.get("QCAD", []))
+        height, z, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula = parse_xdata_from_list(xdata.get("QCAD", []))
         rgba = get_material(layer)
         color, alpha = rgba[:3], rgba[3]
         mesh, mesh_uuid = None, str(uuid.uuid4())
@@ -1176,48 +1973,94 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
         points = []
         closed = False
         
-        # Procesare LWPOLYLINE cu suport pentru arce
+        # Procesare LWPOLYLINE cu suport pentru arce și forme spațiale
         if ent_type == "LWPOLYLINE":
             points = lwpolyline_to_points(e, arc_segments)
             closed = getattr(e, "closed", False)
             if closed and len(points) >= 3:
                 poly = Polygon(points)
                 if poly.is_valid and poly.area > 0:
-                    if abs(angle) > 1e-6:
-                        # Creează mesh pe planul înclinat
-                        mesh = create_inclined_mesh(points, height, angle)
+                    # Folosește formele spațiale dacă avem cercuri de control
+                    if control_points and len(control_points) > 0:
+                        print(f"[DEBUG] Creeaza mesh spatial cu {len(control_points)} cercuri de control")
+                        mesh = create_spatial_mesh_from_contour(points, control_points, height)
+                    elif rotate90:
+                        # Rotație cu 90° în jurul primului segment
+                        print(f"[DEBUG] Creeaza mesh 90° rotit cu normala fetei")
+                        mesh = create_rotated_90_mesh(points, height)
+                        if mesh is not None:
+                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
+                            z_position = z
+                            if "IfcColumn" in layer:
+                                z_position = 0.0  # Coloanele încep de la sol
+                                print(f"[DEBUG] Coloana direct LWPOLYLINE rotate90 {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                            
+                            mesh.apply_translation([0, 0, z_position])
+                    elif abs(angle) > 1e-6:
+                        # Creează mesh cu rotație și proiecție pe plan
+                        mesh = create_angle_based_mesh(points, height, angle)
                     else:
-                        # Mesh orizontal standard
+                        # Mesh orizontal standard cu translație Z
                         mesh = extrude_polygon(poly, height)
+                        if mesh is not None:
+                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
+                            z_position = z
+                            if "IfcColumn" in layer:
+                                z_position = 0.0  # Coloanele încep de la sol
+                                print(f"[DEBUG] Coloana direct LWPOLYLINE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                            
+                            mesh.apply_translation([0, 0, z_position])
                     
-                    if mesh is not None:
-                        mesh.apply_translation([0, 0, z])
-                        # Aplică rotațiile suplimentare pe axele X și Y
+                    # Aplică rotațiile suplimentare pe axele X și Y doar pentru mesh-urile non-spațiale
+                    if mesh is not None and not (control_points and len(control_points) > 0):
                         if abs(rotate_x) > 1e-6 or abs(rotate_y) > 1e-6:
                             mesh = apply_xyz_rotations(mesh, rotate_x, rotate_y, 0.0)
 
-        # Procesare POLYLINE cu suport pentru arce
+        # Procesare POLYLINE cu suport pentru arce și forme spațiale
         elif ent_type == "POLYLINE":
             points = polyline_to_points(e, arc_segments)
             closed = getattr(e, "is_closed", False)
             if closed and len(points) >= 3:
                 poly = Polygon(points)
                 if poly.is_valid and poly.area > 0:
-                    if abs(angle) > 1e-6:
-                        # Creează mesh pe planul înclinat
-                        mesh = create_inclined_mesh(points, height, angle)
+                    # Folosește formele spațiale dacă avem cercuri de control
+                    if control_points and len(control_points) > 0:
+                        print(f"[DEBUG] Creeaza mesh spatial POLYLINE cu {len(control_points)} cercuri de control")
+                        mesh = create_spatial_mesh_from_contour(points, control_points, height)
+                    elif rotate90:
+                        # Rotație cu 90° în jurul primului segment
+                        print(f"[DEBUG] Creeaza mesh 90° rotit POLYLINE cu normala fetei")
+                        mesh = create_rotated_90_mesh(points, height)
+                        if mesh is not None:
+                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
+                            z_position = z
+                            if "IfcColumn" in layer:
+                                z_position = 0.0  # Coloanele încep de la sol
+                                print(f"[DEBUG] Coloana direct POLYLINE rotate90 {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                            
+                            mesh.apply_translation([0, 0, z_position])
+                    elif abs(angle) > 1e-6:
+                        # Creează mesh cu rotație și proiecție pe plan
+                        mesh = create_angle_based_mesh(points, height, angle)
                     else:
-                        # Mesh orizontal standard
+                        # Mesh orizontal standard cu translație Z
                         mesh = extrude_polygon(poly, height)
+                        if mesh is not None:
+                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
+                            z_position = z
+                            if "IfcColumn" in layer:
+                                z_position = 0.0  # Coloanele încep de la sol  
+                                print(f"[DEBUG] Coloana direct POLYLINE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                            
+                            mesh.apply_translation([0, 0, z_position])
                     
-                    if mesh is not None:
-                        mesh.apply_translation([0, 0, z])
-                        # Aplică rotațiile suplimentare pe axele X și Y
+                    # Aplică rotațiile suplimentare pe axele X și Y doar pentru mesh-urile non-spațiale
+                    if mesh is not None and not (control_points and len(control_points) > 0):
                         if abs(rotate_x) > 1e-6 or abs(rotate_y) > 1e-6:
                             mesh = apply_xyz_rotations(mesh, rotate_x, rotate_y, 0.0)
 
-        # Procesare CIRCLE
-        elif ent_type == "CIRCLE" and hasattr(e, "dxf"):
+        # Procesare CIRCLE cu suport pentru forme spațiale (EXCLUDE cercurile de control)
+        elif ent_type == "CIRCLE" and hasattr(e, "dxf") and layer != "control":
             center = (e.dxf.center.x, e.dxf.center.y)
             radius = e.dxf.radius
             segments = max(32, arc_segments * 2)  # Mai multe segmente pentru cercuri
@@ -1231,16 +2074,27 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
             closed = True
             poly = Polygon(points)
             if poly.is_valid and poly.area > 0:
-                if abs(angle) > 1e-6:
-                    # Creează mesh pe planul înclinat
-                    mesh = create_inclined_mesh(points, height, angle)
+                # Folosește formele spațiale dacă avem cercuri de control
+                if control_points and len(control_points) > 0:
+                    print(f"[DEBUG] Creeaza mesh spatial CIRCLE cu {len(control_points)} cercuri de control")
+                    mesh = create_spatial_mesh_from_contour(points, control_points, height)
+                elif abs(angle) > 1e-6:
+                    # Creează mesh cu rotație și proiecție pe plan
+                    mesh = create_angle_based_mesh(points, height, angle)
                 else:
-                    # Mesh orizontal standard
+                    # Mesh orizontal standard cu translație Z
                     mesh = extrude_polygon(poly, height)
+                    if mesh is not None:
+                        # Pentru coloane, z ar trebui să fie 0 (baza la sol)
+                        z_position = z
+                        if "IfcColumn" in layer:
+                            z_position = 0.0  # Coloanele încep de la sol  
+                            print(f"[DEBUG] Coloana direct CIRCLE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                        
+                        mesh.apply_translation([0, 0, z_position])
                 
-                if mesh is not None:
-                    mesh.apply_translation([0, 0, z])
-                    # Aplică rotațiile suplimentare pe axele X și Y
+                # Aplică rotațiile suplimentare pe axele X și Y doar pentru mesh-urile non-spațiale
+                if mesh is not None and not (control_points and len(control_points) > 0):
                     if abs(rotate_x) > 1e-6 or abs(rotate_y) > 1e-6:
                         mesh = apply_xyz_rotations(mesh, rotate_x, rotate_y, 0.0)
 
@@ -1277,13 +2131,30 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
 
             rgba_float = np.array(color + [alpha], dtype=np.float32)
             mesh.visual.vertex_colors = np.tile(rgba_float, (len(mesh.vertices), 1))
+            
+            # Creează material cu nume descriptiv pentru identificare în Godot
+            material_name = f"Material_{layer}_{mesh_name}"
+            
             mesh.visual.material = trimesh.visual.material.PBRMaterial(
-                baseColorFactor=[1.0, 1.0, 1.0, alpha],
+                name=material_name,  # Nume descriptiv cu layer și mesh name
+                baseColorFactor=[color[0], color[1], color[2], alpha],  # Culoare directă în material
                 vertex_color=True,
                 alphaMode="BLEND" if alpha < 1.0 else "OPAQUE"
             )
 
+            # Stochează informații despre material în metadata pentru persistență
+            mesh.metadata["material_color"] = color
+            mesh.metadata["material_alpha"] = alpha
+            mesh.metadata["material_rgba"] = rgba_float
+
             print(f"[DEBUG] Export mesh: {mesh_name} | color={color} alpha={alpha} | vertex_colors.shape={mesh.visual.vertex_colors.shape if hasattr(mesh.visual, 'vertex_colors') else 'N/A'} | height={height} z={z}")
+
+            # Pentru IfcSpace, scade Opening_area din lateral_area dacă este specificată
+            if layer == "IfcSpace" and opening_area_formula:
+                opening_area_value = evaluate_math_formula(opening_area_formula)
+                if opening_area_value > 0:
+                    lateral_area = max(0.0, lateral_area - opening_area_value)
+                    print(f"[DEBUG] IfcSpace {mesh_name}: lateral_area adjusted with Opening_area={opening_area_value:.2f}, final lateral_area={lateral_area:.2f}")
 
             entry = {
                 "dxf_handle": handle,
@@ -1384,6 +2255,10 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                     else:
                         diff.metadata = dict(mesh.metadata) if hasattr(mesh, 'metadata') else {}
                         new_solids.append(diff)
+                        # Recalculează volumul după tăierea cu voidurile globale
+                        if hasattr(diff, 'volume') and diff.volume > 0 and solid_uuid in uuid_to_entry:
+                            uuid_to_entry[solid_uuid]["volume"] = float(diff.volume)
+                            print(f"[DEBUG] Volume updated after global voids: {uuid_to_entry[solid_uuid]['mesh_name']} = {diff.volume:.3f}m³")
                 else:
                     new_solids.append(mesh)
             except Exception as ex:
@@ -1461,6 +2336,10 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                             else:
                                 diff.metadata = dict(mesh.metadata) if hasattr(mesh, 'metadata') else {}
                                 processed_solids.append(diff)
+                                # Recalculează volumul după tăierea cu ferestrele
+                                if hasattr(diff, 'volume') and diff.volume > 0 and solid_uuid in uuid_to_entry:
+                                    uuid_to_entry[solid_uuid]["volume"] = float(diff.volume)
+                                    print(f"[DEBUG] Volume updated after IfcWindow cutting: {uuid_to_entry[solid_uuid]['mesh_name']} = {diff.volume:.3f}m³")
                         else:
                             processed_solids.append(mesh)
                     except Exception as ex:
@@ -1523,6 +2402,10 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         else:
                             diff.metadata = dict(mesh.metadata) if hasattr(mesh, 'metadata') else {}
                             processed_solids.append(diff)
+                            # Recalculează volumul după tăierea cu voidurile de layer
+                            if hasattr(diff, 'volume') and diff.volume > 0 and solid_uuid in uuid_to_entry:
+                                uuid_to_entry[solid_uuid]["volume"] = float(diff.volume)
+                                print(f"[DEBUG] Volume updated after layer voids: {uuid_to_entry[solid_uuid]['mesh_name']} = {diff.volume:.3f}m³")
                     else:
                         processed_solids.append(mesh)
                 except Exception as ex:
@@ -1545,15 +2428,55 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
     # Taie elementele structurale la acoperiș
     solids, mapping = trim_elements_to_roof(solids, mapping)
 
+    # Verificare finală și re-aplicare materiale înainte de export
+    print(f"[DEBUG] Final material verification for {len(solids)} meshes:")
+    for mesh in solids:
+        mesh_name = mesh.metadata.get("name", "unknown")
+        layer_from_metadata = mesh.metadata.get("layer", "unknown")
+        
+        # DEBUG SPECIAL pentru identificarea problemei layer-ului
+        if "window" in mesh_name.lower() or "glass" in mesh_name.lower() or "wood" in mesh_name.lower():
+            print(f"[DEBUG] BLOCK COMPONENT ANALYSIS: {mesh_name}")
+            print(f"   - metadata['layer']: {layer_from_metadata}")
+            print(f"   - metadata['component_layer']: {mesh.metadata.get('component_layer', 'N/A')}")
+            print(f"   - metadata['material_layer']: {mesh.metadata.get('material_layer', 'N/A')}")
+            print(f"   - Expected: wood/glass, Got: {layer_from_metadata}")
+            
+        if "material_rgba" in mesh.metadata and len(mesh.vertices) > 0:
+            # Verifică și re-aplică materialul dacă este necesar
+            component_layer = mesh.metadata.get("layer", "unknown")
+            rgba = mesh.metadata["material_rgba"]
+            
+            # Re-aplică materialul pentru siguranță cu encoding layer
+            mesh.visual.vertex_colors = np.tile(rgba, (len(mesh.vertices), 1))
+            
+            # Creează material cu nume descriptiv care include layer-ul
+            component_layer = mesh.metadata.get("layer", "unknown")
+            material_name = f"Material_{component_layer}_{mesh.metadata.get('name', 'unknown')}"
+            
+            mesh.visual.material = trimesh.visual.material.PBRMaterial(
+                name=material_name,  # Nume descriptiv pentru identificare în Godot
+                baseColorFactor=[mesh.metadata["material_color"][0], mesh.metadata["material_color"][1], mesh.metadata["material_color"][2], mesh.metadata["material_alpha"]],
+                vertex_color=True,
+                alphaMode="BLEND" if mesh.metadata["material_alpha"] < 1.0 else "OPAQUE"
+            )
+            print(f"[DEBUG] Final material check: {mesh_name} | layer={component_layer} | color={mesh.metadata['material_color']}")
+
     # Creează scenă și exportă
     scene = trimesh.Scene()
     for i, mesh in enumerate(solids):
         if "name" in mesh.metadata:
-            node_name = mesh.metadata["name"]
+            base_name = mesh.metadata["name"]
+            layer = mesh.metadata.get("layer", "unknown")
+            
+            # Encoding layer în numele node-ului pentru Godot
+            # Format: MeshName_LAYER_LayerName pentru identificare în Godot
+            node_name = f"{base_name}_LAYER_{layer}"
         else:
             node_name = f"solid_{i}"
-            print(f"[WARNING] Mesh fără 'name' în metadata, fallback la {node_name}")
-        print(f"[DEBUG] Add to scene: node_name={node_name} | mesh={mesh}")
+            print(f"[WARNING] Mesh fara 'name' in metadata, fallback la {node_name}")
+        
+        print(f"[DEBUG] Add to scene: node_name={node_name} | original_layer={mesh.metadata.get('layer', 'unknown')} | vertices={len(mesh.vertices)}")
         scene.add_geometry(mesh, node_name=node_name)
 
     # Export mapping JSON
@@ -1563,10 +2486,55 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
         json.dump(mapping, jf, indent=2)
     print(f"[DEBUG] Exported mapping JSON: {json_path}")
 
+    # Start IFC background conversion
+    if ifc_converter and IFC_CONVERSION_AVAILABLE and ifc_output_path:
+        try:
+            print(f"[DEBUG] Adding {len(mapping)} elements to IFC queue...")
+            
+            # Add all mapping elements to IFC queue
+            for entry in mapping:
+                try:
+                    # Process XDATA before conversion
+                    processed_entry = process_xdata_for_element(entry)
+                    ifc_converter.queue_element_for_conversion(processed_entry)
+                except Exception as e:
+                    print(f"[WARNING] Could not process element for IFC: {entry.get('mesh_name', 'Unknown')} - {e}")
+            
+            # Start background conversion
+            ifc_converter.start_background_conversion(ifc_output_path)
+            print(f"[DEBUG] IFC background conversion started to: {ifc_output_path}")
+            
+        except Exception as e:
+            print(f"[WARNING] Could not start IFC background conversion: {e}")
+
     export_scene(scene, out_path)
 
     elapsed = time.time() - start_time
     print(f"[DEBUG] Finished DXF to GLB in {elapsed:.2f} sec.")
+    
+    # GLB-based IFC conversion (more robust - uses final geometry + metadata)
+    if IFC_GLB_CONVERSION_AVAILABLE:
+        try:
+            base_name = os.path.splitext(out_path)[0]
+            json_mapping_path = base_name + "_mapping.json"
+            ifc_from_glb_path = base_name + "_from_glb.ifc"
+            
+            if os.path.exists(json_mapping_path):
+                print(f"[DEBUG] Starting GLB-based IFC conversion...")
+                if convert_glb_to_ifc(out_path, json_mapping_path, ifc_from_glb_path):
+                    print(f"[SUCCESS] GLB-based IFC conversion completed: {ifc_from_glb_path}")
+                else:
+                    print(f"[WARNING] GLB-based IFC conversion failed")
+            else:
+                print(f"[WARNING] JSON mapping not found for GLB-based IFC conversion: {json_mapping_path}")
+        except Exception as e:
+            print(f"[WARNING] GLB-based IFC conversion error: {e}")
+    
+    # Information about IFC background conversion
+    if ifc_converter and IFC_CONVERSION_AVAILABLE:
+        print(f"[INFO] IFC conversion running in background...")
+        print(f"[INFO] Final IFC file: {ifc_output_path}")
+        print(f"[INFO] To wait for completion: ifc_converter.wait_for_completion()")
 
 # -----------------------------
 # Main

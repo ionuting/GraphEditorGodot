@@ -166,21 +166,26 @@ class DXFHandler(FileSystemEventHandler):
 
 def main():
     # Configurație
-    watch_folder = r"C:\Users\ionut.ciuntuc\Documents\viewer2d\dxf_input"
+    watch_folders = [
+        r"C:\Users\ionut.ciuntuc\Documents\viewer2d\dxf_input",
+        r"C:\Users\ionut.ciuntuc\Documents\viewer2d\python\dxf"
+    ]
     output_folder = r"C:\Users\ionut.ciuntuc\Documents\viewer2d\glb_output" 
     conversion_script = r"C:\Users\ionut.ciuntuc\Documents\viewer2d\python\dxf_to_glb_trimesh.py"
     callback_file = r"C:\Users\ionut.ciuntuc\Documents\viewer2d\reload_signal.json"
     
     # Crează folderele dacă nu există
-    Path(watch_folder).mkdir(exist_ok=True)
+    for folder in watch_folders:
+        Path(folder).mkdir(exist_ok=True)
     Path(output_folder).mkdir(exist_ok=True)
     
-    # Configurează watchdog
-    event_handler = DXFHandler(watch_folder, output_folder, conversion_script, callback_file)
+    # Configurează watchdog pentru fiecare folder
     observer = Observer()
-    observer.schedule(event_handler, watch_folder, recursive=True)
+    for watch_folder in watch_folders:
+        event_handler = DXFHandler(watch_folder, output_folder, conversion_script, callback_file)
+        observer.schedule(event_handler, watch_folder, recursive=True)
+        print(f"[WATCHDOG] Starting monitoring of {watch_folder}")
     
-    print(f"[WATCHDOG] Starting monitoring of {watch_folder}")
     print(f"[WATCHDOG] Output folder: {output_folder}")
     print(f"[WATCHDOG] Press Ctrl+C to stop")
     

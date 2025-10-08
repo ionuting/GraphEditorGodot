@@ -1,0 +1,5 @@
+# Python requirements pentru IFC Space Export
+# Instalare: pip install -r requirements_ifc.txt
+
+ifcopenshell>=0.7.0
+numpy>=1.21.0
