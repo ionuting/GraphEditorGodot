@@ -120,6 +120,11 @@ func _ready():
 	if reload_btn:
 		reload_btn.pressed.connect(_on_reload_btn_pressed)
 	
+	# Integrare Export IFC Button
+	var export_ifc_btn = $CanvasLayer/ExportIfcBtn if has_node("CanvasLayer/ExportIfcBtn") else null
+	if export_ifc_btn:
+		export_ifc_btn.pressed.connect(_on_export_ifc_btn_pressed)
+	
 	# Watchdog pentru monitorizarea automată a fișierelor DXF
 	_setup_dxf_watchdog()
 
@@ -327,6 +332,91 @@ func _load_single_window_gltf(window_entry: Dictionary, source_glb_path: String)
 		str(window_instance.visible)
 	])
 
+func _load_mapping_metadata_for_glb(glb_path: String, scene_root: Node3D):
+	"""Încarcă metadata din fișierul de mapping și o atașează la mesh-uri pentru export IFC"""
+	var mapping_path = glb_path.get_basename() + "_mapping.json"
+	
+	if not FileAccess.file_exists(mapping_path):
+		print("[DEBUG] No mapping file found for metadata: ", mapping_path)
+		return
+	
+	var mapping_file = FileAccess.open(mapping_path, FileAccess.READ)
+	if not mapping_file:
+		print("[ERROR] Cannot open mapping file for metadata: ", mapping_path)
+		return
+	
+	var json_str = mapping_file.get_as_text()
+	mapping_file.close()
+	
+	var json = JSON.new()
+	var parse_result = json.parse(json_str)
+	if parse_result != OK:
+		print("[ERROR] Failed to parse mapping JSON for metadata: ", mapping_path)
+		return
+	
+	var mapping_data = json.data
+	if typeof(mapping_data) != TYPE_ARRAY:
+		print("[ERROR] Invalid mapping data format for metadata")
+		return
+	
+	print("[DEBUG] Loading metadata from mapping for %d entries" % mapping_data.size())
+	
+	# Creează un dicționar pentru căutare rapidă după mesh_name
+	var mapping_by_name = {}
+	for entry in mapping_data:
+		if typeof(entry) == TYPE_DICTIONARY:
+			var mesh_name = entry.get("mesh_name", "")
+			if mesh_name != "":
+				mapping_by_name[mesh_name] = entry
+	
+	# Aplică metadata la toate mesh-urile din scenă
+	_apply_metadata_recursive(scene_root, mapping_by_name)
+
+func _apply_metadata_recursive(node: Node, mapping_by_name: Dictionary):
+	"""Aplică recursiv metadata la mesh-uri din mapping"""
+	if node is MeshInstance3D:
+		var mesh_name = str(node.name)
+		
+		# Caută în mapping după numele exact
+		if mapping_by_name.has(mesh_name):
+			var entry = mapping_by_name[mesh_name]
+			_apply_metadata_to_mesh(node, entry)
+		else:
+			# Încearcă căutare parțială pentru mesh-uri cu nume modificate
+			for key in mapping_by_name.keys():
+				if mesh_name in key or key in mesh_name:
+					var entry = mapping_by_name[key]
+					_apply_metadata_to_mesh(node, entry)
+					break
+	
+	# Recursiv în copii
+	for child in node.get_children():
+		_apply_metadata_recursive(child, mapping_by_name)
+
+func _apply_metadata_to_mesh(mesh_node: MeshInstance3D, mapping_entry: Dictionary):
+	"""Aplică metadata din mapping la un mesh"""
+	# Metadata de bază
+	mesh_node.set_meta("uuid", mapping_entry.get("uuid", ""))
+	mesh_node.set_meta("layer", mapping_entry.get("layer", "default"))
+	mesh_node.set_meta("mesh_name", mapping_entry.get("mesh_name", ""))
+	
+	# Proprietăți geometrice pentru IfcSpace
+	var layer = mapping_entry.get("layer", "")
+	if layer == "IfcSpace":
+		mesh_node.set_meta("area", mapping_entry.get("area", 0.0))
+		mesh_node.set_meta("perimeter", mapping_entry.get("perimeter", 0.0))
+		mesh_node.set_meta("lateral_area", mapping_entry.get("lateral_area", 0.0))
+		mesh_node.set_meta("volume", mapping_entry.get("volume", 0.0))
+		mesh_node.set_meta("height", mapping_entry.get("height", 2.8))
+		mesh_node.set_meta("vertices", mapping_entry.get("vertices", []))
+		
+		print("[DEBUG] Applied IfcSpace metadata to: %s | Area: %.2f | Volume: %.3f | UUID: %s" % [
+			mapping_entry.get("mesh_name", ""),
+			mapping_entry.get("area", 0.0),
+			mapping_entry.get("volume", 0.0),
+			mapping_entry.get("uuid", "")
+		])
+
 # Debug: Recursiv, afișează numele meshurilor și culoarea vertex principal (dacă există)
 func _print_meshes_and_colors(node: Node, glb_path: String):
 
@@ -335,27 +425,91 @@ func _print_meshes_and_colors(node: Node, glb_path: String):
 		var mesh = node.mesh
 		var color_str = "-"
 		var layer_name = "default"
-		# Extrage IfcType (prima parte a numelui meshului, până la _)
-		if mesh_name.find("_") > 0:
-			layer_name = mesh_name.split("_")[0]
-		var element_name = mesh_name.substr(mesh_name.find("_") + 1) if mesh_name.find("_") > 0 else mesh_name
-		# Mapare insensibilă la majuscule/minuscule și fallback la 'default'
-		var found_layer = ""
-		for k in layer_materials.keys():
-			if k.to_lower() == layer_name.to_lower():
-				found_layer = k
-				break
-		if found_layer == "":
-			found_layer = "default"
-		var lconf = layer_materials[found_layer]
-		var mat = StandardMaterial3D.new()
-		mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
-		if lconf["alpha"] < 1.0:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		node.material_override = mat
-		color_str = str(mat.albedo_color)
-		# Debug print pentru fiecare obiect încărcat
-		print("[DEBUG] SCENE LOAD: %s | Mesh: %s | Layer: %s | Alpha: %.2f | Visible: %s | Pos: %s" % [glb_path, mesh_name, found_layer, lconf["alpha"], str(node.visible), str(node.transform.origin)])
+		
+		# Extrage layer-ul din numele encodat (format: MeshName_LAYER_LayerName)
+		var actual_layer = "default"
+		if "_LAYER_" in mesh_name:
+			var parts = mesh_name.split("_LAYER_")
+			if parts.size() >= 2:
+				actual_layer = parts[1]  # Layer-ul real din encoding
+				print("[DEBUG] Detected encoded layer: %s from mesh: %s" % [actual_layer, mesh_name])
+		else:
+			# Fallback la metoda veche (prima parte până la _)
+			if mesh_name.find("_") > 0:
+				actual_layer = mesh_name.split("_")[0]
+		
+		# Verifică dacă mesh-ul are deja un material valid din GLB
+		var existing_material = null
+		var should_use_glb_material = false
+		var material_source = "none"
+		
+		# Încearcă să găsească materialul din GLB în diferite locuri
+		if node.mesh and node.mesh.get_surface_count() > 0:
+			existing_material = node.mesh.surface_get_material(0)  # Material din mesh
+			if existing_material != null:
+				material_source = "mesh_surface"
+		
+		if existing_material == null and node.get_surface_count() > 0:
+			existing_material = node.get_surface_override_material(0)  # Material override
+			if existing_material != null:
+				material_source = "surface_override"
+		
+		# De asemenea, verifică dacă există material override deja setat
+		if existing_material == null and node.material_override != null:
+			existing_material = node.material_override
+			material_source = "material_override"
+		
+		print("[DEBUG] Material search for %s: source=%s, material=%s" % [mesh_name, material_source, existing_material])
+		
+		if existing_material != null:
+			# Verifică dacă materialul din GLB are un nume care indică encoding-ul nostru
+			var mat_name = existing_material.resource_name if existing_material else ""
+			
+			# Încearcă și numele materialului dacă resource_name nu există
+			if mat_name == "" and existing_material.has_method("get_name"):
+				mat_name = existing_material.get_name()
+			
+			print("[DEBUG] Found material name: '%s' (begins with Material_: %s)" % [mat_name, str(mat_name.begins_with("Material_"))])
+			
+			if mat_name != "" and mat_name.begins_with("Material_"):
+				print("[DEBUG] ✓ Found GLB material with encoding: %s" % mat_name)
+				should_use_glb_material = true
+				
+				# Încearcă să acceseze culoarea din material
+				if existing_material is StandardMaterial3D:
+					var std_mat = existing_material as StandardMaterial3D
+					color_str = str(std_mat.albedo_color)
+					print("[DEBUG] GLB StandardMaterial3D color: %s" % color_str)
+				else:
+					color_str = "GLB_Material(%s)" % existing_material.get_class()
+					print("[DEBUG] GLB material type: %s" % existing_material.get_class())
+			else:
+				print("[DEBUG] ✗ Material name doesn't match encoding pattern: '%s'" % mat_name)
+		
+		# Doar suprascrie materialul dacă nu există unul valid din GLB
+		if not should_use_glb_material:
+			# Mapare insensibilă la majuscule/minuscule și fallback la 'default'
+			var found_layer = ""
+			for k in layer_materials.keys():
+				if k.to_lower() == actual_layer.to_lower():
+					found_layer = k
+					break
+			if found_layer == "":
+				found_layer = "default"
+			
+			var lconf = layer_materials[found_layer]
+			var mat = StandardMaterial3D.new()
+			mat.albedo_color = Color(lconf["color"][0], lconf["color"][1], lconf["color"][2], lconf["alpha"])
+			if lconf["alpha"] < 1.0:
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			node.material_override = mat
+			color_str = str(mat.albedo_color)
+			print("[DEBUG] SCENE LOAD (Override): %s | Mesh: %s | Layer: %s->%s | Alpha: %.2f | Color: %s" % [glb_path, mesh_name, actual_layer, found_layer, lconf["alpha"], color_str])
+		else:
+			print("[DEBUG] SCENE LOAD (GLB Material): %s | Mesh: %s | Layer: %s | Material: %s | Color: %s | Preserved from GLB" % [glb_path, mesh_name, actual_layer, existing_material.resource_name if existing_material else "Unknown", color_str])
+		
+		# Setează layer_name pentru structura de date
+		layer_name = actual_layer
 
 		# --- Populare structură pentru tree ---
 		if not imported_projects.has(glb_path):
@@ -670,24 +824,34 @@ func get_mouse_pos_in_xy() -> Vector3:
 				
 
 func populate_tree_with_projects(projects: Dictionary):
+	print("[DEBUG] === POPULATING TREE WITH PROJECTS ===")
+	print("[DEBUG] Projects structure: ", projects.keys())
+	
 	var tree_node = get_node_or_null("Objects")
 	if tree_node == null:
-		print("[DEBUG] Nu există nodul Objects de tip Tree în scenă!")
+		print("[ERROR] Nu există nodul Objects de tip Tree în scenă!")
 		return
+		
+	print("[DEBUG] Tree node found successfully: ", tree_node)
 	tree_node.clear()
 	tree_node.set_columns(2)
 	var root = tree_node.create_item()
 	tree_node.set_column_title(0, "GLB File / IfcType / Element")
 	tree_node.set_column_title(1, "Visible")
 	tree_node.set_column_titles_visible(true)
+	
+	print("[DEBUG] Tree setup complete, columns: ", tree_node.columns)
 
 	for file_name in projects.keys():
+		print("[DEBUG] Creating file item: ", file_name)
 		var file_item = tree_node.create_item(root)
 		file_item.set_text(0, file_name)
 		file_item.set_cell_mode(1, TreeItem.CELL_MODE_CHECK)
 		file_item.set_checked(1, true)
 		file_item.set_editable(1, true)
-		file_item.set_metadata(0, {"type": "file", "file": file_name})
+		var file_metadata = {"type": "file", "file": file_name}
+		file_item.set_metadata(0, file_metadata)
+		print("[DEBUG] File item created with metadata: ", file_metadata)
 
 		var layer_groups = projects[file_name]
 		for layer_group in layer_groups.keys():
@@ -746,40 +910,79 @@ func _highlight_selected_node(node):
 	selected_geometry.material_override = sel_mat
 
 func _on_tree_item_edited():
+	print("[DEBUG] Tree item edited triggered!")
+	
 	var tree_node = get_node_or_null("Objects")
 	if not tree_node:
+		print("[ERROR] Tree node 'Objects' not found!")
 		return
+		
 	var edited = tree_node.get_edited()
 	if not edited:
+		print("[ERROR] No edited item found!")
 		return
+		
 	var meta = edited.get_metadata(0)
 	if typeof(meta) != TYPE_DICTIONARY:
+		print("[ERROR] Invalid metadata type: ", typeof(meta))
 		return
+		
 	var checked = edited.is_checked(1)
+	print("[DEBUG] Item edited: ", edited.get_text(0), " | Checked: ", checked, " | Type: ", meta.get("type", "unknown"))
+	
 	if meta.has("type"):
 		match meta["type"]:
 			"file":
+				print("[DEBUG] Setting visibility for file: ", meta["file"], " to ", checked)
 				_set_visibility_file(meta["file"], checked)
 			"group":
+				print("[DEBUG] Setting visibility for group: ", meta["group"], " in file: ", meta["file"], " to ", checked)
 				_set_visibility_group(meta["file"], meta["group"], checked)
 			"element":
+				print("[DEBUG] Setting visibility for element: ", meta["element"], " in group: ", meta["group"], " file: ", meta["file"], " to ", checked)
 				_set_visibility_element(meta["file"], meta["group"], meta["element"], checked)
+	else:
+		print("[ERROR] No 'type' in metadata: ", meta)
 
 func _set_visibility_file(file, visible):
+	print("[DEBUG] _set_visibility_file called for file: '%s', visible: %s" % [file, visible])
+	print("[DEBUG] imported_projects has file: ", imported_projects.has(file))
+	print("[DEBUG] Available files in imported_projects: ", imported_projects.keys())
+	
 	if imported_projects.has(file):
+		print("[DEBUG] Processing groups in file '%s': %s" % [file, imported_projects[file].keys()])
 		for group in imported_projects[file].keys():
 			_set_visibility_group(file, group, visible)
+	else:
+		print("[ERROR] File '%s' not found in imported_projects!" % file)
 
 func _set_visibility_group(file, group, visible):
+	print("[DEBUG] _set_visibility_group called for group: '%s' in file: '%s', visible: %s" % [group, file, visible])
+	
 	if imported_projects.has(file) and imported_projects[file].has(group):
+		print("[DEBUG] Processing elements in group '%s': %s" % [group, imported_projects[file][group].keys()])
 		for elem in imported_projects[file][group].keys():
 			_set_visibility_element(file, group, elem, visible)
+	else:
+		print("[ERROR] Group '%s' not found in file '%s'!" % [group, file])
+		if imported_projects.has(file):
+			print("[DEBUG] Available groups in file: ", imported_projects[file].keys())
 
 func _set_visibility_element(file, group, elem, visible):
 	if imported_projects.has(file) and imported_projects[file].has(group) and imported_projects[file][group].has(elem):
 		var node = imported_projects[file][group][elem]
 		if node:
 			node.visible = visible
+			print("[DEBUG] Set visibility for element '%s' to %s (node: %s)" % [elem, visible, node.name])
+		else:
+			print("[ERROR] Node is null for element: %s in group: %s, file: %s" % [elem, group, file])
+	else:
+		print("[ERROR] Path not found in imported_projects: file=%s, group=%s, elem=%s" % [file, group, elem])
+		print("[DEBUG] Available files: ", imported_projects.keys())
+		if imported_projects.has(file):
+			print("[DEBUG] Available groups in file '%s': " % file, imported_projects[file].keys())
+			if imported_projects[file].has(group):
+				print("[DEBUG] Available elements in group '%s': " % group, imported_projects[file][group].keys())
 
 	
 func _setup_ui_buttons():
@@ -1217,6 +1420,10 @@ func _load_glb_with_retry(glb_path: String) -> bool:
 					print("[DEBUG] ✅ GLTFDocument direct loading successful!")
 					add_child(scene)
 					print("[DEBUG] ✓ Hot reload successful: ", glb_path)
+					
+					# Adaugă metadata din mapping pentru export IFC
+					_load_mapping_metadata_for_glb(glb_path, scene)
+					
 					_print_meshes_and_colors(scene, glb_path)
 					
 					# Încarcă ferestrele GLTF pentru acest GLB
@@ -1310,6 +1517,10 @@ func _load_glb_with_retry(glb_path: String) -> bool:
 			if scene:
 				add_child(scene)
 				print("[DEBUG] ✓ Hot reload successful: ", glb_path)
+				
+				# Adaugă metadata din mapping pentru export IFC
+				_load_mapping_metadata_for_glb(glb_path, scene)
+				
 				_print_meshes_and_colors(scene, glb_path)
 				
 				# Încarcă ferestrele GLTF pentru acest GLB
@@ -1540,7 +1751,341 @@ func _flash_reload_indicator():
 	# Animație fade out
 	var tween = create_tween()
 	tween.tween_property(flash_label, "modulate:a", 0.0, 2.0)
-	tween.tween_callback(flash_label.queue_free)
+	tween.tween_callback(flash_label.queue_free.bind())
+
+# === IFC Space Export ===
+func _on_export_ifc_btn_pressed():
+	"""Exportă IfcSpace-urile din scena curentă în format IFC"""
+	print("[DEBUG] Starting IFC Space export...")
+	
+	# Verifică dacă avem IfcSpace-uri în scenă
+	var space_nodes = _find_ifcspace_nodes()
+	if space_nodes.is_empty():
+		print("[WARNING] No IfcSpace elements found in scene")
+		_show_export_message("No IfcSpace elements found to export", false)
+		return
+	
+	# Creează folder pentru export dacă nu există
+	var export_dir = "exported_ifc"
+	if not DirAccess.dir_exists_absolute(export_dir):
+		DirAccess.open(".").make_dir(export_dir)
+	
+	# Generează nume fișier cu timestamp
+	var timestamp = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
+	var base_name = "spaces_export_" + timestamp
+	var godot_data_path = export_dir + "/" + base_name + "_geometry.json"
+	var ifc_output_path = export_dir + "/" + base_name + ".ifc"
+	
+	# Exportă geometria din Godot
+	var geometry_data = _extract_space_geometry_data(space_nodes)
+	if not _save_json_file(godot_data_path, geometry_data):
+		_show_export_message("Failed to save geometry data", false)
+		return
+	
+	# Găsește cel mai recent fișier de mapping
+	var mapping_path = _find_latest_mapping_file()
+	if mapping_path == "":
+		print("[ERROR] No mapping file found. Import a DXF/GLB project first.")
+		_show_export_message("No mapping file found. Import a DXF/GLB project first.", false)
+		return
+	
+	# Rulează exportul Python IFC
+	var success = _run_python_ifc_export(godot_data_path, mapping_path, ifc_output_path)
+	
+	if success:
+		print("[SUCCESS] IFC export completed: ", ifc_output_path)
+		_show_export_message("IFC export completed successfully!\nFile: " + ifc_output_path, true)
+	else:
+		print("[ERROR] IFC export failed")
+		_show_export_message("IFC export failed. Check console for details.", false)
+
+func _find_ifcspace_nodes() -> Array:
+	"""Găsește toate nodurile IfcSpace din scenă"""
+	var space_nodes = []
+	_find_ifcspace_recursive(self, space_nodes)
+	print("[DEBUG] Found %d IfcSpace nodes" % space_nodes.size())
+	return space_nodes
+
+func _find_ifcspace_recursive(node: Node, space_nodes: Array):
+	"""Caută recursiv nodurile IfcSpace"""
+	var is_ifcspace = false
+	
+	# Verifică dacă nodul curent este un MeshInstance3D
+	if node is MeshInstance3D:
+		# Prioritate 1: Verifică metadata layer
+		if node.has_meta("layer"):
+			var layer = node.get_meta("layer")
+			if layer == "IfcSpace":
+				is_ifcspace = true
+				print("[DEBUG] Found IfcSpace by metadata: ", node.name)
+		
+		# Prioritate 2: Verifică numele nodului doar dacă nu a fost găsit prin metadata
+		elif "IfcSpace" in str(node.name):
+			is_ifcspace = true
+			print("[DEBUG] Found IfcSpace by name: ", node.name)
+		
+		# Adaugă nodul doar o singură dată
+		if is_ifcspace:
+			# Verifică dacă nodul nu există deja în array (pentru siguranță extra)
+			if node not in space_nodes:
+				space_nodes.append(node)
+			else:
+				print("[WARNING] Prevented duplicate IfcSpace node: ", node.name)
+	
+	# Recursiv în copii
+	for child in node.get_children():
+		_find_ifcspace_recursive(child, space_nodes)
+
+func _extract_space_geometry_data(space_nodes: Array) -> Dictionary:
+	"""Extrage datele geometrice din nodurile IfcSpace și le îmbogățește cu datele din JSON de mapare"""
+	var spaces_data = []
+	
+	# Încarcă datele din fișierul de mapare JSON pentru a obține valorile corecte
+	var mapping_data = _load_mapping_data_for_spaces()
+	
+	for node in space_nodes:
+		if not node is MeshInstance3D or not node.mesh:
+			continue
+			
+		var space_data = {}
+		space_data["mesh_name"] = str(node.name)
+		space_data["uuid"] = node.get_meta("uuid") if node.has_meta("uuid") else ""
+		
+		# Extrage vertices din mesh pentru geometria 3D
+		var vertices = []
+		var mesh = node.mesh
+		
+		if mesh is ArrayMesh and mesh.get_surface_count() > 0:
+			var arrays = mesh.surface_get_arrays(0)
+			if arrays[Mesh.ARRAY_VERTEX]:
+				var vertex_array = arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+				for vertex in vertex_array:
+					# Transformă vertex-ul în spațiul world
+					var world_vertex = node.to_global(vertex)
+					vertices.append([world_vertex.x, world_vertex.y, world_vertex.z])
+		
+		# Limitează numărul de vertices pentru a evita duplicatele (în general conturul de bază)
+		if vertices.size() > 100:
+			# Încearcă să extragi doar conturul exterior (primul segment)
+			var step = max(1, vertices.size() / 20)  # Max 20 puncte pentru contur
+			var simplified_vertices = []
+			for i in range(0, vertices.size(), step):
+				simplified_vertices.append(vertices[i])
+			vertices = simplified_vertices
+		
+		space_data["vertices"] = vertices
+		space_data["vertex_count"] = vertices.size()
+		
+		# IMPORTANT: Înlocuiește valorile din metadata cu cele corecte din JSON de mapare
+		var mapping_entry = _find_mapping_entry_for_space(space_data["uuid"], space_data["mesh_name"], mapping_data)
+		if mapping_entry:
+			# Folosește valorile calculate corect din JSON (inclusiv Opening_area)
+			space_data["height"] = _calculate_space_height_from_xdata(mapping_entry)
+			space_data["area"] = float(mapping_entry.get("area", 0.0))
+			space_data["volume"] = float(mapping_entry.get("volume", 0.0))
+			space_data["perimeter"] = float(mapping_entry.get("perimeter", 0.0))
+			space_data["lateral_area"] = float(mapping_entry.get("lateral_area", 0.0))
+			
+			print("[DEBUG] Enhanced space data from JSON mapping: %s" % space_data["mesh_name"])
+			print("  - Area: %.3fm², Perimeter: %.3fm, Lateral Area: %.3fm²" % [space_data["area"], space_data["perimeter"], space_data["lateral_area"]])
+			print("  - Volume: %.3fm³, Height: %.3fm, UUID: %s" % [space_data["volume"], space_data["height"], space_data["uuid"]])
+		else:
+			# Fallback: folosește metadata din Godot dacă nu găsim în JSON
+			space_data["height"] = node.get_meta("height") if node.has_meta("height") else 2.8
+			space_data["area"] = node.get_meta("area") if node.has_meta("area") else 0.0
+			space_data["volume"] = node.get_meta("volume") if node.has_meta("volume") else 0.0
+			space_data["perimeter"] = 0.0  # Nu există în metadata Godot
+			space_data["lateral_area"] = 0.0  # Nu există în metadata Godot
+			
+			print("[WARNING] Could not find mapping data for space: %s, using fallback values" % space_data["mesh_name"])
+		
+		spaces_data.append(space_data)
+		print("[DEBUG] Extracted enhanced geometry for space: %s (%d vertices)" % [space_data["mesh_name"], vertices.size()])
+	
+	return {"spaces": spaces_data, "export_timestamp": Time.get_unix_time_from_system()}
+
+func _load_mapping_data_for_spaces() -> Array:
+	"""Încarcă datele din fișierul JSON de mapare pentru spații IfcSpace"""
+	var mapping_file = _find_latest_mapping_file()
+	if mapping_file.is_empty():
+		print("[WARNING] No mapping file found for IFC Space export")
+		return []
+	
+	print("[DEBUG] Loading mapping data from: %s" % mapping_file)
+	
+	var file = FileAccess.open(mapping_file, FileAccess.READ)
+	if not file:
+		print("[ERROR] Could not open mapping file: %s" % mapping_file)
+		return []
+	
+	var json_string = file.get_as_text()
+	file.close()
+	
+	var json = JSON.new()
+	var parse_result = json.parse(json_string)
+	if parse_result != OK:
+		print("[ERROR] Failed to parse JSON mapping file: %s" % json.get_error_message())
+		return []
+	
+	var mapping_data = json.data
+	if not mapping_data is Array:
+		print("[ERROR] Mapping file does not contain an array")
+		return []
+	
+	# Filtrează doar entitățile IfcSpace
+	var space_entries = []
+	for entry in mapping_data:
+		if entry is Dictionary and entry.get("layer", "") == "IfcSpace":
+			space_entries.append(entry)
+	
+	print("[DEBUG] Found %d IfcSpace entries in mapping file" % space_entries.size())
+	return space_entries
+
+func _find_mapping_entry_for_space(uuid: String, mesh_name: String, mapping_data: Array) -> Dictionary:
+	"""Găsește intrarea din mapping care corespunde cu spațiul dat"""
+	
+	# Prioritate 1: Caută după UUID exact
+	for entry in mapping_data:
+		if entry.get("uuid", "") == uuid and not uuid.is_empty():
+			print("[DEBUG] Found mapping entry by UUID: %s" % uuid)
+			return entry
+	
+	# Prioritate 2: Caută după mesh_name exact
+	for entry in mapping_data:
+		if entry.get("mesh_name", "") == mesh_name and not mesh_name.is_empty():
+			print("[DEBUG] Found mapping entry by mesh_name: %s" % mesh_name)
+			return entry
+	
+	# Prioritate 3: Caută după partea de bază a numelui (fără sufixe)
+	var base_name = mesh_name.split("_")[0] if "_" in mesh_name else mesh_name
+	for entry in mapping_data:
+		var entry_base_name = entry.get("mesh_name", "").split("_")[0] if "_" in entry.get("mesh_name", "") else entry.get("mesh_name", "")
+		if entry_base_name == base_name and not base_name.is_empty():
+			print("[DEBUG] Found mapping entry by base name: %s -> %s" % [base_name, entry.get("mesh_name", "")])
+			return entry
+	
+	print("[WARNING] No mapping entry found for space: UUID=%s, mesh_name=%s" % [uuid, mesh_name])
+	return {}
+
+func _calculate_space_height_from_xdata(mapping_entry: Dictionary) -> float:
+	"""Calculează înălțimea spațiului din datele XDATA din mapping"""
+	
+	# Caută în XDATA pentru înălțime
+	var xdata = mapping_entry.get("xdata", {})
+	if xdata is Dictionary:
+		# Caută câmpuri comune pentru înălțime
+		for height_field in ["Height", "height", "Space_Height", "floor_height"]:
+			if xdata.has(height_field):
+				var height_value = xdata[height_field]
+				if height_value is String:
+					# Dacă este string, încearcă să-l convertești la float
+					return float(height_value) if height_value.is_valid_float() else 2.8
+				elif height_value is float or height_value is int:
+					return float(height_value)
+		
+		print("[DEBUG] XDATA found but no height field: %s" % str(xdata.keys()))
+	
+	# Fallback: calculează înălțimea din volum și arie dacă sunt disponibile
+	var volume = float(mapping_entry.get("volume", 0.0))
+	var area = float(mapping_entry.get("area", 0.0))
+	
+	if volume > 0.0 and area > 0.0:
+		var calculated_height = volume / area
+		print("[DEBUG] Calculated height from volume/area: %.3fm (V=%.3f, A=%.3f)" % [calculated_height, volume, area])
+		return calculated_height
+	
+	# Fallback final: înălțime standard
+	print("[DEBUG] Using default height: 2.8m")
+	return 2.8
+
+func _find_latest_mapping_file() -> String:
+	"""Găsește cel mai recent fișier de mapping din folderul curent"""
+	var mapping_files = []
+	var dir = DirAccess.open(".")
+	
+	if dir:
+		dir.list_dir_begin()
+		var file_name = dir.get_next()
+		while file_name != "":
+			if file_name.ends_with("_mapping.json"):
+				var full_path = dir.get_current_dir() + "/" + file_name
+				var file_time = FileAccess.get_modified_time(full_path)
+				mapping_files.append({"path": full_path, "time": file_time})
+			file_name = dir.get_next()
+		dir.list_dir_end()
+	
+	if mapping_files.is_empty():
+		return ""
+	
+	# Sortează după timp și returnează cel mai recent
+	mapping_files.sort_custom(func(a, b): return a.time > b.time)
+	var latest = mapping_files[0]["path"]
+	print("[DEBUG] Using mapping file: ", latest)
+	return latest
+
+func _save_json_file(file_path: String, data: Dictionary) -> bool:
+	"""Salvează datele în format JSON"""
+	var file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		print("[ERROR] Cannot create file: ", file_path)
+		return false
+	
+	var json_string = JSON.stringify(data, "\t")
+	file.store_string(json_string)
+	file.close()
+	
+	print("[DEBUG] Saved geometry data: ", file_path)
+	return true
+
+func _run_python_ifc_export(godot_data_path: String, mapping_path: String, ifc_output_path: String) -> bool:
+	"""Rulează script-ul Python pentru exportul IFC"""
+	var script_path = "python/ifc_space_exporter.py"
+	var project_name = "Godot CAD Viewer Spaces"
+	
+	var args = [script_path, godot_data_path, mapping_path, ifc_output_path, project_name]
+	var output = []
+	
+	print("[DEBUG] Running Python IFC export: python ", args)
+	var exit_code = OS.execute("python", args, output, true)
+	
+	print("[PYTHON IFC OUTPUT] ", output)
+	print("[PYTHON IFC EXIT CODE] ", exit_code)
+	
+	return exit_code == 0
+
+func _show_export_message(message: String, success: bool):
+	"""Afișează un mesaj de export în UI"""
+	var message_label = Label.new()
+	message_label.text = message
+	message_label.position = Vector2(get_viewport().get_visible_rect().size.x / 2 - 200, 100)
+	message_label.size = Vector2(400, 100)
+	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	message_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	
+	if success:
+		message_label.add_theme_color_override("font_color", Color.GREEN)
+	else:
+		message_label.add_theme_color_override("font_color", Color.RED)
+	
+	message_label.add_theme_font_size_override("font_size", 14)
+	
+	# Fundal semi-transparent
+	var panel = Panel.new()
+	panel.position = message_label.position - Vector2(10, 10)
+	panel.size = message_label.size + Vector2(20, 20)
+	panel.add_theme_color_override("bg_color", Color(0, 0, 0, 0.7))
+	
+	canvas.add_child(panel)
+	canvas.add_child(message_label)
+	
+	# Animație fade out după 5 secunde
+	var tween = create_tween()
+	tween.tween_interval(5.0)  # Schimbat din tween_delay în tween_interval
+	tween.tween_property(panel, "modulate:a", 0.0, 1.0)
+	tween.parallel().tween_property(message_label, "modulate:a", 0.0, 1.0)
+	tween.tween_callback(panel.queue_free.bind())
+	tween.tween_callback(message_label.queue_free.bind())
 
 func _exit_tree():
 	# Oprește procesul watchdog la ieșire
