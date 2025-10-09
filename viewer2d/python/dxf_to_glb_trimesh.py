@@ -1744,6 +1744,219 @@ def export_scene(scene, out_path):
     print(f"[DEBUG] Exported GLB: {out_path}")
 
 # -----------------------------
+# Procesare Linii de Sectiune
+# -----------------------------
+def process_section_lines(doc, mapping):
+    """
+    Procesează liniile de pe layerul 'section' pentru a crea planuri de secțiune.
+    
+    Args:
+        doc: documentul DXF
+        mapping: lista de mapping unde vor fi adăugate datele de secțiune
+    
+    Returns:
+        list: Lista cu dicționare ce conțin informații despre secțiuni
+    """
+    msp = doc.modelspace()
+    section_data = []
+    
+    print("[DEBUG] Processing section lines...")
+    
+    for entity in msp:
+        # Caută linii pe layerul 'section'
+        if (entity.dxftype() == "LINE" and 
+            getattr(entity.dxf, "layer", "").lower() == "section"):
+            
+            start_point = entity.dxf.start
+            end_point = entity.dxf.end
+            handle = getattr(entity.dxf, "handle", None)
+            
+            # Parsează XDATA pentru parametrii de secțiune
+            section_depth = 5.0  # default
+            lower_z = -10.0      # default
+            upper_z = 20.0       # default
+            section_id = f"section_{handle}" if handle else f"section_{len(section_data)}"
+            
+            if entity.has_xdata:
+                try:
+                    qcad_data = entity.get_xdata("QCAD")
+                    if qcad_data:
+                        for item in qcad_data:
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                tag, value = item[0], item[1]
+                                if tag == 1000:  # String data
+                                    value_str = str(value).lower()
+                                    if "section_depth:" in value_str:
+                                        try:
+                                            section_depth = float(value_str.split("section_depth:")[1].split()[0])
+                                        except:
+                                            pass
+                                    elif "lower_z:" in value_str:
+                                        try:
+                                            lower_z = float(value_str.split("lower_z:")[1].split()[0])
+                                        except:
+                                            pass
+                                    elif "upper_z:" in value_str:
+                                        try:
+                                            upper_z = float(value_str.split("upper_z:")[1].split()[0])
+                                        except:
+                                            pass
+                except Exception as e:
+                    print(f"[DEBUG] Error parsing section XDATA: {e}")
+            
+            # Calculează vectorul direcției în planul XY
+            direction_vector = np.array([
+                end_point.x - start_point.x,
+                end_point.y - start_point.y,
+                0.0
+            ])
+            
+            # Calculează lungimea liniei (va fi folosită ca lățimea planului)
+            line_length = np.linalg.norm(direction_vector)
+            if line_length > 1e-6:
+                direction_vector = direction_vector / line_length
+            else:
+                print(f"[WARNING] Section line has zero length, skipping")
+                continue
+            
+            # Calculează normala planului (perpendiculară pe direcția liniei în planul XY)
+            plane_normal = np.array([-direction_vector[1], direction_vector[0], 0.0])
+            
+            # Centrul planului (punctul mijloc al liniei)
+            plane_center = np.array([
+                (start_point.x + end_point.x) / 2.0,
+                (start_point.y + end_point.y) / 2.0,
+                (lower_z + upper_z) / 2.0
+            ])
+            
+            # Creează mesh pentru planul de secțiune (gri transparent)
+            plane_width = max(section_depth, 1.0)
+            plane_height = upper_z - lower_z
+            
+            # Creează informațiile pentru planul de secțiune
+            section_info = {
+                "section_id": section_id,
+                "start_point": [start_point.x, start_point.y, getattr(start_point, 'z', 0.0)],
+                "end_point": [end_point.x, end_point.y, getattr(end_point, 'z', 0.0)],
+                "plane_center": plane_center,
+                "plane_normal": plane_normal,
+                "section_depth": section_depth,
+                "line_length": line_length,  # Lungimea reală a liniei din DXF
+                "lower_z": lower_z,
+                "upper_z": upper_z
+            }
+            section_data.append(section_info)
+            
+            # Adaugă la mapping
+            section_uuid = str(uuid.uuid4())
+            section_entry = {
+                    "dxf_handle": handle,
+                    "uuid": section_uuid,
+                    "type": "section_plane",
+                    "layer": "section",
+                    "start_point": {
+                        "x": float(start_point.x),
+                        "y": float(start_point.y),
+                        "z": float(start_point.z) if hasattr(start_point, 'z') else 0.0
+                    },
+                    "end_point": {
+                        "x": float(end_point.x),
+                        "y": float(end_point.y),
+                        "z": float(end_point.z) if hasattr(end_point, 'z') else 0.0
+                    },
+                    "direction_vector": {
+                        "x": float(direction_vector[0]),
+                        "y": float(direction_vector[1]),
+                        "z": float(direction_vector[2])
+                    },
+                    "plane_normal": {
+                        "x": float(plane_normal[0]),
+                        "y": float(plane_normal[1]),
+                        "z": float(plane_normal[2])
+                    },
+                    "plane_center": {
+                        "x": float(plane_center[0]),
+                        "y": float(plane_center[1]),
+                        "z": float(plane_center[2])
+                    },
+                    "section_depth": section_depth,
+                    "lower_z": lower_z,
+                    "upper_z": upper_z,
+                    "material": {
+                        "color": [0.7, 0.7, 0.7],  # Gri deschis
+                        "alpha": 0.3               # Transparent
+                    }
+                }
+            
+            mapping.append(section_entry)
+            print(f"[DEBUG] Added section plane: depth={section_depth}, z_range=({lower_z}, {upper_z}), line_length={line_length:.2f}")
+    
+    print(f"[DEBUG] Processed {len(section_data)} section planes")
+    return section_data  # Return the section data, not the meshes
+
+def create_section_plane_mesh(center, normal, width, height):
+    """
+    Creează un mesh pentru un plan de secțiune rectangular.
+    
+    Args:
+        center: punctul central al planului
+        normal: normala planului
+        width: lățimea planului
+        height: înălțimea planului
+    
+    Returns:
+        trimesh.Trimesh: mesh-ul planului sau None în caz de eroare
+    """
+    try:
+        # Calculează vectorii pentru orientarea planului
+        if abs(normal[2]) < 0.9:  # Planul nu este orizontal
+            up_vector = np.array([0, 0, 1])
+        else:  # Planul este aproape orizontal
+            up_vector = np.array([1, 0, 0])
+        
+        # Calculează vectorul dreapta (perpendicular pe normal și up)
+        right_vector = np.cross(normal, up_vector)
+        right_vector = right_vector / np.linalg.norm(right_vector)
+        
+        # Recalculează up_vector pentru a fi perpendicular pe normal și right
+        up_vector = np.cross(right_vector, normal)
+        up_vector = up_vector / np.linalg.norm(up_vector)
+        
+        # Calculează colțurile planului
+        half_width = width / 2.0
+        half_height = height / 2.0
+        
+        corners = [
+            center - half_width * right_vector - half_height * up_vector,
+            center + half_width * right_vector - half_height * up_vector,
+            center + half_width * right_vector + half_height * up_vector,
+            center - half_width * right_vector + half_height * up_vector
+        ]
+        
+        # Creează mesh-ul double-faced (4 triunghiuri - 2 pe fiecare față)
+        vertices = np.array(corners)
+        faces = np.array([
+            # Fața frontală (normala pozitivă)
+            [0, 1, 2],  # Primul triunghi
+            [0, 2, 3],  # Al doilea triunghi
+            # Fața posterioară (normala negativă - ordinea inversă)
+            [0, 3, 2],  # Al treilea triunghi (inversat)
+            [0, 2, 1]   # Al patrulea triunghi (inversat)
+        ])
+        
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        
+        # Materialul va fi setat din layer_materials.json pentru layerul 'section'
+        # Folosim culoarea implicită transparentă aici
+        mesh.visual.face_colors = [180, 180, 180, 77]  # RGB + Alpha (0.3 * 255)
+        
+        return mesh
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to create section plane mesh: {e}")
+        return None
+
+# -----------------------------
 # Conversie DXF → GLB
 # -----------------------------
 def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
@@ -2461,6 +2674,88 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                 alphaMode="BLEND" if mesh.metadata["material_alpha"] < 1.0 else "OPAQUE"
             )
             print(f"[DEBUG] Final material check: {mesh_name} | layer={component_layer} | color={mesh.metadata['material_color']}")
+
+    # Process section lines from DXF
+    try:
+        section_data = process_section_lines(doc, mapping)
+        print(f"[DEBUG] Found {len(section_data)} section lines")
+        
+        # Add section planes to the existing solids list
+        for i, section in enumerate(section_data):
+            # Extract parameters for section plane mesh creation
+            center = section['plane_center']
+            normal = section['plane_normal']
+            width = section['line_length']  # Folosește lungimea reală a liniei din DXF
+            height = section['upper_z'] - section['lower_z']
+            
+            section_mesh = create_section_plane_mesh(center, normal, width, height)
+            if section_mesh:
+                mesh_name = f"section_plane_{i}"
+                section_mesh.name = mesh_name
+                section_uuid = str(uuid.uuid4())
+                
+                # Get material from layer_materials.json
+                rgba = get_material('section')
+                color, alpha = rgba[:3], rgba[3]
+                
+                # Add metadata similar to other meshes
+                section_mesh.metadata = {
+                    'name': mesh_name,
+                    'layer': 'section',
+                    'uuid': section_uuid,
+                    'section_id': section['section_id'],
+                    'material_color': color,
+                    'material_alpha': alpha,
+                    'material_rgba': np.array(color + [alpha], dtype=np.float32)
+                }
+                
+                # Apply material to mesh
+                rgba_float = np.array(color + [alpha], dtype=np.float32)
+                section_mesh.visual.vertex_colors = np.tile(rgba_float, (len(section_mesh.vertices), 1))
+                
+                # Create material with descriptive name
+                material_name = f"Material_section_{mesh_name}"
+                section_mesh.visual.material = trimesh.visual.material.PBRMaterial(
+                    name=material_name,
+                    baseColorFactor=[color[0], color[1], color[2], alpha],
+                    vertex_color=True,
+                    alphaMode="BLEND" if alpha < 1.0 else "OPAQUE"
+                )
+                
+                # Add to solids list for scene export
+                solids.append(section_mesh)
+                
+                # Add to mapping for Godot integration
+                mapping.append({
+                    'mesh_name': mesh_name,
+                    'uuid': section_uuid,
+                    'dxf_type': 'SECTION_PLANE',
+                    'layer': 'section',
+                    'section_id': section['section_id'],
+                    'start_point': [float(x) for x in section['start_point']],
+                    'end_point': [float(x) for x in section['end_point']],
+                    'plane_normal': [float(x) for x in section['plane_normal']],
+                    'plane_center': [float(x) for x in section['plane_center']],
+                    'section_depth': float(section['section_depth']),
+                    'line_length': float(section['line_length']),  # Lungimea reală a liniei
+                    'lower_z': float(section['lower_z']),
+                    'upper_z': float(section['upper_z']),
+                    'role': 1,  # Regular solid for scene
+                    'solid_flag': 1,
+                    'angle': 0.0,
+                    'rotate_x': 0.0,
+                    'rotate_y': 0.0,
+                    'perimeter': 0.0,
+                    'area': section['section_depth'] * 2.0,  # Approximate area
+                    'lateral_area': 0.0,
+                    'volume': 0.0,  # Section planes have no volume
+                    'segment_lengths': [],
+                    'vertices': [],
+                    'is_cut_by': []
+                })
+                print(f"[DEBUG] Added section plane: {mesh_name}")
+    except Exception as e:
+        print(f"[WARNING] Error processing section lines: {e}")
 
     # Creează scenă și exportă
     scene = trimesh.Scene()
