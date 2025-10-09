@@ -4,6 +4,8 @@
 
 [node name="Node3D" type="Node3D"]
 script = ExtResource("1_n7kv7")
+z_min = -100.0
+z_max = 100.0
 
 [node name="Camera3D" type="Camera3D" parent="."]
 
@@ -16,14 +18,29 @@ offset_right = 169.0
 offset_bottom = 31.0
 text = "Selecteaza folder dxf"
 
+[node name="ReloadBtn" type="Button" parent="CanvasLayer"]
+offset_left = 185.0
+offset_top = 2.0
+offset_right = 280.0
+offset_bottom = 33.0
+text = "Reload"
+
+[node name="ExportIfcBtn" type="Button" parent="CanvasLayer"]
+offset_left = 295.0
+offset_top = 2.0
+offset_right = 420.0
+offset_bottom = 33.0
+text = "Export IFC Spaces"
+
 [node name="Panel" type="Panel" parent="CanvasLayer"]
 anchors_preset = -1
-anchor_right = 0.214
-anchor_bottom = 0.147
-offset_left = 1734.0
-offset_top = 18.0
-offset_right = 1534.28
-offset_bottom = -99.6
+anchor_left = 0.902
+anchor_right = 1.0
+anchor_bottom = 0.091
+offset_left = -0.560059
+offset_top = 17.0
+offset_right = -20.0
+offset_bottom = -34.52
 
 [node name="Objects" type="Tree" parent="."]
 anchors_preset = -1
@@ -31,8 +48,8 @@ anchor_right = 0.118
 anchor_bottom = 0.991
 offset_left = 2.0
 offset_top = 82.0
-offset_right = 102.36
-offset_bottom = 0.200012
+offset_right = 78.44
+offset_bottom = -27.28
 
 [node name="CSGCombiner3D" type="CSGCombiner3D" parent="."]
 visible = false
