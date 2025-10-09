@@ -9,9 +9,9 @@ func _init():
 @onready var canvas: CanvasLayer = $CanvasLayer
 
 # Grid & background
-@export var grid_size: int = 100
 @export var grid_spacing: float = 1.0
 @export var grid_color: Color = Color(0.8,0.8,0.8,0.3)
+@export var background_color: Color = Color(0.95,0.95,0.95)
 
 # Infinite Grid settings
 var grid_visible: bool = true
@@ -19,32 +19,7 @@ var grid_z_position: float = 0.0
 var infinite_grid: MeshInstance3D
 var grid_material: StandardMaterial3D
 
-@export var background_color: Color = Color(0.95,0.95,0.95)
 
-# Z-depth and drawing plane settings
-@export var z_min: float = -10.0
-@export var z_max: float = 10.0
-@export var drawing_plane_z: float = 0.0
-
-# === SECTION SYSTEM ===
-@export var section_enabled: bool = false
-@export var horizontal_section_enabled: bool = false
-@export var vertical_section_enabled: bool = false
-
-# Horizontal section settings (XY plane)
-@export var horizontal_section_z: float = 0.0
-@export var horizontal_section_depth: float = 2.0
-
-# Vertical section settings (XZ and YZ planes)
-@export var vertical_section_x: float = 0.0
-@export var vertical_section_y: float = 0.0
-@export var vertical_section_depth: float = 5.0
-
-# Section visualization
-var section_plane_horizontal: MeshInstance3D
-var section_plane_vertical_x: MeshInstance3D
-var section_plane_vertical_y: MeshInstance3D
-var section_material: StandardMaterial3D
 
 # Snap settings
 var snap_enabled: bool = false
@@ -52,7 +27,7 @@ var snap_distance: float = 0.5
 var snap_preview_marker: MeshInstance3D
 
 # Zoom, Pan, Orbit
-@export var zoom_speed: float = 1.1
+@export var zoom_speed: float = 1.05  # Zoom mai puțin sensibil (5% în loc de 10%)
 @export var max_orthogonal_size: float = 10000.0  # Limite pentru zoom out extrem
 @export var min_orthogonal_size: float = 0.1      # Limite pentru zoom in extrem
 var pan_last_pos: Vector2
@@ -61,13 +36,16 @@ var rotate_last_pos: Vector2
 var is_rotating := false
 var orbit_pivot: Vector3 = Vector3.ZERO
 
-var selected_geometry: Node3D = null
+# UI elements
+var coord_label: Label
+
 # Grid UI controls
 var grid_controls_panel: Panel
 var grid_visible_checkbox: CheckBox
 var grid_z_slider: HSlider
 var grid_z_label: Label
 
+var selected_geometry: Node3D = null
 var default_material: StandardMaterial3D = null
 var layer_materials := {}
 
@@ -76,6 +54,47 @@ var imported_projects := {}
 
 # Current project folder pentru ReloadBtn
 var current_project_folder: String = ""
+
+# === CUT SHADER SECTION SYSTEM ===
+var cut_shader_integration: Node3D = null
+var section_planes_data: Array = []
+var current_section_state: Dictionary = {}
+
+# Section visibility and control variables
+var horizontal_section_enabled: bool = false
+var vertical_section_enabled: bool = false
+var horizontal_section_z: float = 1.0
+var horizontal_section_depth: float = 0.5
+var vertical_section_x: float = 0.0
+var vertical_section_y: float = 0.0
+var vertical_section_depth: float = 0.5
+
+# Section UI controls
+var section_controls_panel: Panel
+var h_section_checkbox: CheckBox
+var v_section_checkbox: CheckBox
+var h_section_slider: HSlider
+var h_depth_slider: HSlider
+var v_section_x_slider: HSlider
+var v_section_y_slider: HSlider
+var v_depth_slider: HSlider
+
+# Section effects
+var section_material: StandardMaterial3D
+var section_shader: Shader
+
+# Section planes for visualization
+var section_plane_horizontal: MeshInstance3D
+var section_plane_vertical_x: MeshInstance3D
+var section_plane_vertical_y: MeshInstance3D
+
+# Additional UI controls for sections
+var vertical_section_toggle: CheckBox
+
+# Drawing plane and depth control variables
+var drawing_plane_z: float = 0.0
+var z_min: float = -2.0
+var z_max: float = 5.0
 
 func _ready():
 	print("🚨🚨🚨 CAD_VIEWER_3D.GD _ready() FUNCTION STARTED! 🚨🚨🚨")
@@ -96,9 +115,7 @@ func _ready():
 	if canvas == null:
 		var cl = CanvasLayer.new()
 		add_child(cl)
-		var panel = Panel.new()
-		cl.add_child(panel)
-		canvas = panel
+		canvas = cl
 
 	default_material = StandardMaterial3D.new()
 	default_material.albedo_color = Color(0.5, 1.0, 0.0) # lime green
@@ -127,58 +144,242 @@ func _ready():
 	camera.environment = env
 	print("[DEBUG] Environment configured with background color:", background_color)
 
-	_create_grid(grid_size, grid_spacing)
-
+	print("[DEBUG] Creating infinite grid...")
+	_create_infinite_grid()
+	print("[DEBUG] Creating center lines...")
+	_create_center_lines(50)
+	print("[DEBUG] Setting up UI buttons...")
 	_setup_ui_buttons()
-	_create_section_planes()
+	print("[DEBUG] Setting up coordinate label...")
+	_setup_coordinate_label()
+	print("[DEBUG] Setting up grid controls...")
+	_setup_grid_controls()
+	print("[DEBUG] Updating camera clipping...")
 	_update_camera_clipping()
-
-
-	# Conectează semnale pentru Tree (Objects)
-	var tree_node = get_node_or_null("Objects")
-	if tree_node:
-		tree_node.connect("item_selected", Callable(self, "_on_tree_item_selected"))
-		tree_node.connect("item_edited", Callable(self, "_on_tree_item_edited"))
-
-	# Integrare LoadDxfBtn
-	var load_btn = $CanvasLayer/LoadDxfBtn if has_node("CanvasLayer/LoadDxfBtn") else null
-	if load_btn:
-		load_btn.pressed.connect(_on_load_dxf_btn_pressed)
-		# Creează FileDialog pentru selectare folder dacă nu există
-		if not has_node("CanvasLayer/DxfFolderDialog"):
-			var file_dialog = FileDialog.new()
-			file_dialog.name = "DxfFolderDialog"
-			file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-			file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-			file_dialog.connect("dir_selected", Callable(self, "_on_dxf_folder_selected"))
-			$CanvasLayer.add_child(file_dialog)
-	
-	# Integrare ReloadBtn
-	var reload_btn = $CanvasLayer/ReloadBtn if has_node("CanvasLayer/ReloadBtn") else null
-	if reload_btn:
-		reload_btn.pressed.connect(_on_reload_btn_pressed)
+	print("[DEBUG] Creating snap preview marker...")
+	_create_snap_preview_marker()
+	print("=== CAD VIEWER 3D - SCENE STARTUP COMPLETE ===")
+	print("[DEBUG] Final grid state - infinite_grid node:", infinite_grid != null, "visible:", infinite_grid.visible if infinite_grid else "N/A")
 	
 	# Integrare Export IFC Button
 	var export_ifc_btn = $CanvasLayer/ExportIfcBtn if has_node("CanvasLayer/ExportIfcBtn") else null
 	if export_ifc_btn:
 		export_ifc_btn.pressed.connect(_on_export_ifc_btn_pressed)
+
+	print("[DEBUG] 🔥🔥🔥 READY TO MOVE TO UI INTEGRATION SECTION 🔥🔥🔥")
+	print("[DEBUG] *** STEP 9: Moving to UI integration section ***")
 	
-	# Watchdog pentru monitorizarea automată a fișierelor DXF
+	# DEBUGGING CRITICAL: Salvează în fișier pentru a vedea dacă se ajunge aici
+	var debug_file = FileAccess.open("user://debug_ready_log.txt", FileAccess.WRITE)
+	if debug_file:
+		debug_file.store_line("STEP 9: UI integration section reached at " + str(Time.get_unix_time_from_system()))
+		debug_file.close()
+	
+	# Conectează semnale pentru Tree (Objects)
+	print("[DEBUG] *** STEP 10: Connecting Tree signals ***")
+	var tree_node = get_node_or_null("Objects")
+	if tree_node:
+		tree_node.connect("item_selected", Callable(self, "_on_tree_item_selected"))
+		tree_node.connect("item_edited", Callable(self, "_on_tree_item_edited"))
+		print("[DEBUG] ✓ Tree signals connected")
+	else:
+		print("[DEBUG] ✗ Tree node not found")
+
+	print("[DEBUG] *** STEP 11: Starting UI integration ***")
+	# Integrare LoadDxfBtn
+	print("[DEBUG] *** SEARCHING FOR LoadDxfBtn ***")
+	
+	# DEBUGGING CRITICAL: Salvează în fișier progresul
+	var debug_file2 = FileAccess.open("user://debug_ready_log.txt", FileAccess.WRITE_READ)
+	if debug_file2:
+		debug_file2.seek_end()
+		debug_file2.store_line("STEP 11: Searching for LoadDxfBtn at " + str(Time.get_unix_time_from_system()))
+		debug_file2.close()
+	
+	var load_btn = $CanvasLayer/LoadDxfBtn if has_node("CanvasLayer/LoadDxfBtn") else null
+	if load_btn:
+		print("[DEBUG] ✓ LoadDxfBtn found, connecting...")
+		load_btn.pressed.connect(_on_load_dxf_btn_pressed)
+		print("[DEBUG] ✓ LoadDxfBtn connected successfully")
+	else:
+		print("[ERROR] ✗ LoadDxfBtn NOT FOUND!")
+	
+	# Conectează FileDialog-ul existent din scenă
+	print("[DEBUG] *** SEARCHING FOR DxfFolderDialog ***")
+	print("[DEBUG] Checking path: CanvasLayer/DxfFolderDialog")
+	print("[DEBUG] has_node result:", has_node("CanvasLayer/DxfFolderDialog"))
+	
+	# DEBUGGING CRITICAL: Salvează în fișier progresul
+	var debug_file3 = FileAccess.open("user://debug_ready_log.txt", FileAccess.WRITE_READ)
+	if debug_file3:
+		debug_file3.seek_end()
+		debug_file3.store_line("STEP 12: Searching for DxfFolderDialog - has_node result: " + str(has_node("CanvasLayer/DxfFolderDialog")) + " at " + str(Time.get_unix_time_from_system()))
+		debug_file3.close()
+	var file_dialog = $CanvasLayer/DxfFolderDialog if has_node("CanvasLayer/DxfFolderDialog") else null
+	if file_dialog:
+		print("[DEBUG] FileDialog found during initialization!")
+		print("[DEBUG] FileDialog class:", file_dialog.get_class())
+		print("[DEBUG] FileDialog file_mode:", file_dialog.file_mode)
+		print("[DEBUG] FileDialog access:", file_dialog.access)
+		
+		# Listează toate semnalele disponibile
+		print("[DEBUG] Available signals:")
+		var signal_list = file_dialog.get_signal_list()
+		for signal_info in signal_list:
+			print("[DEBUG] - Signal:", signal_info.name)
+		
+		# În Godot 4, pentru FILE_MODE_OPEN_DIR, semnalul poate fi diferit
+		if file_dialog.has_signal("dir_selected"):
+			file_dialog.dir_selected.connect(Callable(self, "_on_dxf_folder_selected"))
+			print("[DEBUG] FileDialog dir_selected connected successfully")
+		elif file_dialog.has_signal("files_selected"):
+			file_dialog.files_selected.connect(Callable(self, "_on_dxf_files_selected"))
+			print("[DEBUG] FileDialog files_selected connected successfully")
+		elif file_dialog.has_signal("file_selected"):
+			file_dialog.file_selected.connect(Callable(self, "_on_dxf_file_selected"))
+			print("[DEBUG] FileDialog file_selected connected successfully")
+		else:
+			print("[ERROR] No suitable signal found on FileDialog")
+		
+		# Debug info despre FileDialog
+		print("[DEBUG] FileDialog file_mode:", file_dialog.file_mode)
+		print("[DEBUG] FileDialog access:", file_dialog.access)
+		print("[DEBUG] Available signals:", file_dialog.get_signal_list())
+	else:
+		print("[ERROR] DxfFolderDialog not found in scene!")
+	
+	print("[DEBUG] *** STEP 12: FileDialog section completed ***")
+	
+	# Integrare ReloadBtn
+	print("[DEBUG] *** STEP 13: Searching for ReloadBtn ***")
+	var reload_btn = $CanvasLayer/ReloadBtn if has_node("CanvasLayer/ReloadBtn") else null
+	if reload_btn:
+		reload_btn.pressed.connect(_on_reload_btn_pressed)
+	
+	# Integrare Cut Shader System
+	_setup_cut_shader_integration()
+	
+	print("[DEBUG] *** ALL INITIALIZATION COMPLETE - SETTING UP WATCHDOG ***")
+	# Watchdog pentru monitorizarea automată a fișierelor DXF (la sfârșit să nu blocheze inițializarea)
 	_setup_dxf_watchdog()
 
 # === DXF to GLB batch import ===
 func _on_load_dxf_btn_pressed():
-	var file_dialog = $CanvasLayer.get_node("DxfFolderDialog")
+	print("[DEBUG] *** LOAD DXF BUTTON PRESSED ***")
+	print("[DEBUG] 🔥 BUTTON CLICK CONFIRMED - FUNCTION IS WORKING! 🔥")
+	
+	# Salvează în fișier pentru debugging
+	var debug_file = FileAccess.open("user://button_press_log.txt", FileAccess.WRITE)
+	if debug_file:
+		debug_file.store_line("Button pressed at: " + str(Time.get_unix_time_from_system()))
+		debug_file.close()
+	
+	print("[DEBUG] Checking for FileDialog...")
+	
+	var file_dialog = $CanvasLayer/DxfFolderDialog if has_node("CanvasLayer/DxfFolderDialog") else null
 	if file_dialog:
-		file_dialog.popup_centered()
+		print("[DEBUG] FileDialog found!")
+		print("[DEBUG] FileDialog type:", file_dialog.get_class())
+		print("[DEBUG] FileDialog file_mode:", file_dialog.file_mode)
+		print("[DEBUG] FileDialog access:", file_dialog.access)
+		print("[DEBUG] FileDialog current_dir:", file_dialog.current_dir)
+		
+		# Verifică conexiunile de semnal
+		var connections = file_dialog.get_signal_connection_list("dir_selected")
+		print("[DEBUG] dir_selected connections:", connections.size())
+		for connection in connections:
+			print("[DEBUG] - Connected to:", connection.callable.get_object(), "method:", connection.callable.get_method())
+		
+		# TEST RUNTIME: Forțează reconnectarea semnalului
+		if connections.size() == 0:
+			print("[DEBUG] Nu există conexiuni - conectez semnalul în runtime...")
+			file_dialog.dir_selected.connect(Callable(self, "_on_dxf_folder_selected"))
+			print("[DEBUG] Semnal conectat cu succes în runtime!")
+		else:
+			print("[DEBUG] Există", connections.size(), "conexiuni existente")
+		
+		# Verifică din nou după reconnectare
+		connections = file_dialog.get_signal_connection_list("dir_selected")
+		print("[DEBUG] dir_selected connections DUPĂ reconnectare:", connections.size())
+		
+		# BACKUP: Conectează și alte semnale pentru debugging
+		if not file_dialog.file_selected.is_connected(_on_backup_file_selected):
+			file_dialog.file_selected.connect(_on_backup_file_selected)
+			print("[DEBUG] Conectat backup semnal file_selected")
+		
+		if not file_dialog.files_selected.is_connected(_on_backup_files_selected):
+			file_dialog.files_selected.connect(_on_backup_files_selected)
+			print("[DEBUG] Conectat backup semnal files_selected")
+		
+		print("[DEBUG] Opening FileDialog popup...")
+		file_dialog.popup_centered(Vector2i(800, 600))
+		print("[DEBUG] FileDialog should be visible now")
 	else:
+		print("[ERROR] DxfFolderDialog not found!")
+		print("[DEBUG] Available CanvasLayer children:")
+		if has_node("CanvasLayer"):
+			var canvas = $CanvasLayer
+			for child in canvas.get_children():
+				print("[DEBUG] - Child:", child.name, "type:", child.get_class())
 		push_error("DxfFolderDialog not found!")
 
 func _on_dxf_folder_selected(dir_path):
+	print("[DEBUG] *** _on_dxf_folder_selected CALLED ***")
 	print("[DEBUG] Folder selectat:", dir_path)
+	print("[DEBUG] Folder exists:", DirAccess.open(dir_path) != null)
+	
 	# Salvează folderul curent pentru reload
 	current_project_folder = dir_path
+	
+	# Verifică conținutul folderului
+	var dir = DirAccess.open(dir_path)
+	if dir:
+		var dxf_count = 0
+		var glb_count = 0
+		dir.list_dir_begin()
+		var file_name = dir.get_next()
+		while file_name != "":
+			if file_name.to_lower().ends_with(".dxf"):
+				dxf_count += 1
+			elif file_name.to_lower().ends_with(".glb"):
+				glb_count += 1
+			file_name = dir.get_next()
+		dir.list_dir_end()
+		print("[DEBUG] Found in folder - DXF files:", dxf_count, " GLB files:", glb_count)
+	
 	_process_dxf_folder(dir_path)
+
+# Funcții alternative pentru diferite semnale de FileDialog
+func _on_dxf_files_selected(files: PackedStringArray):
+	print("[DEBUG] *** _on_dxf_files_selected CALLED ***")
+	print("[DEBUG] Files selected:", files)
+	if files.size() > 0:
+		var dir_path = files[0].get_base_dir()
+		print("[DEBUG] Extracted directory:", dir_path)
+		_on_dxf_folder_selected(dir_path)
+
+func _on_dxf_file_selected(file_path: String):
+	print("[DEBUG] *** _on_dxf_file_selected CALLED ***")
+	print("[DEBUG] File selected:", file_path)
+	var dir_path = file_path.get_base_dir()
+	print("[DEBUG] Extracted directory:", dir_path)
+	_on_dxf_folder_selected(dir_path)
+
+# Funcții de backup pentru debugging FileDialog
+func _on_backup_file_selected(file_path: String):
+	print("[DEBUG] *** BACKUP _on_backup_file_selected CALLED ***")
+	print("[DEBUG] Backup file selected:", file_path)
+	var dir_path = file_path.get_base_dir()
+	print("[DEBUG] Redirecting to folder processing:", dir_path)
+	_on_dxf_folder_selected(dir_path)
+
+func _on_backup_files_selected(files: PackedStringArray):
+	print("[DEBUG] *** BACKUP _on_backup_files_selected CALLED ***")
+	print("[DEBUG] Backup files selected:", files.size(), "files")
+	if files.size() > 0:
+		var dir_path = files[0].get_base_dir()
+		print("[DEBUG] Redirecting to folder processing:", dir_path)
+		_on_dxf_folder_selected(dir_path)
 
 func _on_reload_btn_pressed():
 	if current_project_folder == "":
@@ -201,23 +402,54 @@ func _on_reload_btn_pressed():
 	_process_dxf_folder(current_project_folder)
 
 func _process_dxf_folder(dir_path: String):
+	print("[DEBUG] *** _process_dxf_folder STARTED ***")
+	print("[DEBUG] Processing folder:", dir_path)
+	
 	var dir = DirAccess.open(dir_path)
-	if dir:
-		dir.list_dir_begin()
-		var file_name = dir.get_next()
-		var glb_paths = []
-		while file_name != "":
-			if not dir.current_is_dir() and file_name.to_lower().ends_with(".dxf"):
+	if not dir:
+		print("[ERROR] Could not open directory:", dir_path)
+		return
+	
+	print("[DEBUG] Directory opened successfully")
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	var glb_paths = []
+	var dxf_files_found = []
+	
+	while file_name != "":
+		if not dir.current_is_dir():
+			print("[DEBUG] Found file:", file_name)
+			if file_name.to_lower().ends_with(".dxf"):
+				dxf_files_found.append(file_name)
 				var dxf_path = dir_path + "/" + file_name
 				var glb_path = dir_path + "/" + file_name.get_basename() + ".glb"
-				print("[DEBUG] Converting ", dxf_path, " to ", glb_path)
-				_run_python_dxf_to_glb(dxf_path, glb_path)
-				if FileAccess.file_exists(glb_path):
-					glb_paths.append(glb_path)
-			file_name = dir.get_next()
-		dir.list_dir_end()
-		# Încarcă toate GLB-urile rezultate
+				print("[DEBUG] Will convert:", dxf_path, " -> ", glb_path)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	
+	print("[DEBUG] Found", dxf_files_found.size(), "DXF files:", dxf_files_found)
+	
+	# Procesează fiecare fișier DXF
+	for dxf_file in dxf_files_found:
+		var dxf_path = dir_path + "/" + dxf_file
+		var glb_path = dir_path + "/" + dxf_file.get_basename() + ".glb"
+		
+		print("[DEBUG] Converting:", dxf_path, "->", glb_path)
+		var exit_code = _run_python_dxf_to_glb(dxf_path, glb_path)
+		print("[DEBUG] Conversion exit code:", exit_code)
+		
+		if FileAccess.file_exists(glb_path):
+			print("[DEBUG] GLB file created successfully:", glb_path)
+			glb_paths.append(glb_path)
+		else:
+			print("[ERROR] GLB file not created:", glb_path)
+	
+	print("[DEBUG] Total GLB files to load:", glb_paths.size())
+	if glb_paths.size() > 0:
+		print("[DEBUG] Starting GLB loading...")
 		_load_glb_meshes(glb_paths)
+	else:
+		print("[WARNING] No GLB files to load")
 
 func _run_python_dxf_to_glb(dxf_path: String, glb_path: String):
 	var script_path = "python/dxf_to_glb_trimesh.py"
@@ -562,7 +794,6 @@ func _print_meshes_and_colors(node: Node, glb_path: String):
 func _on_view_button_pressed(view_name: String):
 	match view_name:
 		"TOP": _set_top_view()
-
 		"FRONT": _set_front_view()
 		"LEFT": _set_left_view()
 		"RIGHT": _set_right_view()
@@ -575,42 +806,42 @@ func _set_top_view():
 	camera.size = 20
 	camera.transform.origin = Vector3(0,0,10)
 	camera.look_at(Vector3(0,0,0), Vector3(0,1,0))
-
+	set_section_for_view("top")
 
 func _set_front_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(0,-10,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
-
+	set_section_for_view("front")
 
 func _set_left_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(-10,0,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
-
+	set_section_for_view("left")
 
 func _set_right_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(10,0,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
-
+	set_section_for_view("right")
 
 func _set_back_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(0,10,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
-
+	set_section_for_view("back")
 
 func _set_free_view():
 	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	camera.fov = 60
 	camera.transform.origin = Vector3(10,10,10)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
-
+	set_section_for_view("free")
 
 func _on_fit_all_pressed():
 	"""Încadrează toate obiectele în camera curentă"""
@@ -668,43 +899,9 @@ func _fit_camera_to_bbox(bbox: AABB):
 		camera.transform.origin = bbox_center - current_forward * distance
 		camera.look_at(bbox_center, Vector3.UP)
 
-# === SECTION INTEGRATION WITH VIEWS ===
 
 
-# Grid creation
-func _create_grid(size: int, spacing: float):
-	var vertices = PackedVector3Array()
-	var colors = PackedColorArray()
-	for i in range(-size, size + 1):
-		if i != 0:
-			vertices.append(Vector3(i*spacing, -size*spacing, drawing_plane_z))
-			vertices.append(Vector3(i*spacing, size*spacing, drawing_plane_z))
-			colors.append(grid_color)
-			colors.append(grid_color)
-			
-			vertices.append(Vector3(-size*spacing, i*spacing, drawing_plane_z))
-			vertices.append(Vector3(size*spacing, i*spacing, drawing_plane_z))
-			colors.append(grid_color)
-			colors.append(grid_color)
-	
-	var arrays = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_COLOR] = colors
-	var mesh = ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
-	
-	# Create material with transparency support
-	var grid_material = StandardMaterial3D.new()
-	grid_material.flags_transparent = true
-	grid_material.vertex_color_use_as_albedo = true
-	grid_material.no_depth_test = false
-	grid_material.flags_do_not_use_depth_prepass = true
-	
-	var grid_instance = MeshInstance3D.new()
-	grid_instance.mesh = mesh
-	grid_instance.material_override = grid_material
-	add_child(grid_instance)
+
 
 
 # Grid creation
@@ -715,8 +912,8 @@ func _create_infinite_grid():
 	print("[GRID_DEBUG] Grid color:", grid_color)
 	
 	# Creează liniile grid-ului într-un mod dinamic și mare
-	var vertices = PackedVector3Array()
-	var colors = PackedColorArray()
+	var grid_vertices = PackedVector3Array()
+	var grid_colors = PackedColorArray()
 	
 	# Grid foarte mare pentru efectul "infinit"
 	var grid_size = 500  # Mult mai mare decât înainte
@@ -724,49 +921,68 @@ func _create_infinite_grid():
 	
 	# Linii pe X (paralele cu axa X)
 	for i in range(-grid_size, grid_size + 1):
-		vertices.append(Vector3(-grid_size * spacing, i * spacing, grid_z_position))
-		vertices.append(Vector3(grid_size * spacing, i * spacing, grid_z_position))
-		colors.append(grid_color)
-		colors.append(grid_color)
+		grid_vertices.append(Vector3(-grid_size * spacing, i * spacing, grid_z_position))
+		grid_vertices.append(Vector3(grid_size * spacing, i * spacing, grid_z_position))
+		grid_colors.append(grid_color)
+		grid_colors.append(grid_color)
 	
 	# Liniile pe Y (paralele cu axa Y) 
 	for i in range(-grid_size, grid_size + 1):
-		vertices.append(Vector3(i * spacing, -grid_size * spacing, grid_z_position))
-		vertices.append(Vector3(i * spacing, grid_size * spacing, grid_z_position))
-		colors.append(grid_color)
-		colors.append(grid_color)
+		grid_vertices.append(Vector3(i * spacing, -grid_size * spacing, grid_z_position))
+		grid_vertices.append(Vector3(i * spacing, grid_size * spacing, grid_z_position))
+		grid_colors.append(grid_color)
+		grid_colors.append(grid_color)
 	
 	# Creează mesh-ul
-	var arrays = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_COLOR] = colors
-	var mesh = ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+	var grid_arrays = []
+	grid_arrays.resize(Mesh.ARRAY_MAX)
+	grid_arrays[Mesh.ARRAY_VERTEX] = grid_vertices
+	grid_arrays[Mesh.ARRAY_COLOR] = grid_colors
+	var grid_mesh = ArrayMesh.new()
+	grid_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, grid_arrays)
 	
 	# Creează material transparent
 	grid_material = StandardMaterial3D.new()
-	grid_material.flags_transparent = true
+	grid_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	grid_material.vertex_color_use_as_albedo = true
-	grid_material.flags_unshaded = true
+	grid_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	grid_material.no_depth_test = false
-	grid_material.flags_do_not_use_depth_prepass = true
+	grid_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
 	
 	# Creează instanța
 	infinite_grid = MeshInstance3D.new()
-	infinite_grid.mesh = mesh
+	infinite_grid.mesh = grid_mesh
 	infinite_grid.material_override = grid_material
 	infinite_grid.position.z = grid_z_position
 	infinite_grid.visible = grid_visible
 	add_child(infinite_grid)
 	
 	print("[GRID_DEBUG] Infinite grid MeshInstance3D created successfully!")
-	print("[GRID_DEBUG] Grid stats: ", vertices.size() / 2, " lines, mesh surfaces:", mesh.get_surface_count())
+	print("[GRID_DEBUG] Grid stats: ", grid_vertices.size() / 2, " lines, mesh surfaces:", grid_mesh.get_surface_count())
 	print("[GRID_DEBUG] Grid position:", infinite_grid.position)
 	print("[GRID_DEBUG] Grid visible:", infinite_grid.visible)
-	print("[GRID_DEBUG] Grid material transparent:", grid_material.flags_transparent)
+	print("[GRID_DEBUG] Grid material transparency:", grid_material.transparency)
 	print("[GRID_DEBUG] Grid added to scene tree as child of:", get_name())
-	print("[CADViewer] Infinite grid created with ", vertices.size() / 2, " lines at Z=", grid_z_position)
+	print("[CADViewer] Infinite grid created with ", grid_vertices.size() / 2, " lines at Z=", grid_z_position)
+
+func _create_center_lines(size: float):
+	var mesh = ArrayMesh.new()
+	var verts = PackedVector3Array([
+		Vector3(-size, 0, drawing_plane_z), Vector3(size, 0, drawing_plane_z),
+		Vector3(0, -size, drawing_plane_z), Vector3(0, size, drawing_plane_z)
+	])
+	var colors = PackedColorArray([
+		Color.RED, Color.RED,
+		Color.GREEN, Color.GREEN
+	])
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+	var axes = MeshInstance3D.new()
+	axes.mesh = mesh
+	add_child(axes)
 
 # Input handling cu snap
 func _unhandled_input(event):
@@ -803,6 +1019,10 @@ func _unhandled_input(event):
 		var delta = event.position - rotate_last_pos
 		_orbit_camera(delta, orbit_pivot)
 		rotate_last_pos = event.position
+
+	if event is InputEventMouseMotion:
+		_update_coordinate_display()
+		_update_snap_preview()
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
@@ -841,7 +1061,12 @@ func _unhandled_input(event):
 					csg.material_override = sel_mat
 				print("[DEBUG] Selected geometry: ", selected_geometry)
 
-
+	# === HOTKEYS ===
+	# F - Fit All (Frame All objects)
+	if event is InputEventKey and event.pressed:
+		match event.keycode:
+			KEY_F:  # Fit All (Frame All)
+				_on_fit_all_pressed()
 
 func _update_snap_preview():
 	if not snap_enabled:
@@ -858,14 +1083,34 @@ func _update_snap_preview():
 	else:
 		snap_preview_marker.visible = false
 
+# Z-depth control callbacks
+func _on_z_min_changed(value: float):
+	z_min = value
+	_update_camera_clipping()
+	_update_info_label()
 
+func _on_z_max_changed(value: float):
+	z_max = value
+	_update_camera_clipping()
+	_update_info_label()
+
+func _on_drawing_plane_z_changed(value: float):
+	drawing_plane_z = value
+	_update_drawing_plane_visual()
 
 func _set_ground_level():
 	drawing_plane_z = 0.0
 	z_min = -2.0
 	z_max = 5.0
+	_update_z_spinboxes()
 	_update_camera_clipping()
 	_update_drawing_plane_visual()
+
+func _set_floor1_level():
+	drawing_plane_z = 3.0
+	_update_camera_clipping()
+	_update_drawing_plane_visual()
+
 
 
 func _update_camera_clipping():
@@ -880,14 +1125,18 @@ func _update_camera_clipping():
 		camera.far = 10000.0  # Mult mai mare pentru perspective
 
 func _update_drawing_plane_visual():
-	_clear_grid_and_axes()
-	_create_grid(grid_size, grid_spacing)
-
+	# Pentru grid infinit, doar actualizăm poziția Z
+	if infinite_grid:
+		infinite_grid.position.z = grid_z_position
 
 func _clear_grid_and_axes():
 	for child in get_children():
-		if child is MeshInstance3D and child != camera and child != snap_preview_marker:
+		if child is MeshInstance3D and child != camera and child != snap_preview_marker and child != infinite_grid:
 			child.queue_free()
+
+func _update_coordinate_display():
+	var world_pos = get_mouse_pos_in_xy()
+	coord_label.text = "X: %.2f, Y: %.2f, Z: %.2f" % [world_pos.x, world_pos.y, grid_z_position]
 
 func _zoom_at_mouse(factor: float):
 	var world_before = get_mouse_pos_in_xy()
@@ -1137,50 +1386,192 @@ func _setup_ui_buttons():
 	
 	print("[UI_DEBUG] UI buttons setup complete - all buttons added to right panel")
 
+func _setup_coordinate_label():
+	coord_label = Label.new()
+	coord_label.text = "X: 0.0, Y: 0.0, Z: 0.0"
+	coord_label.position = Vector2(220, get_viewport().get_visible_rect().size.y - 50)  # Lângă panelul de grid
+	coord_label.size = Vector2(300, 30)
+	coord_label.add_theme_color_override("font_color", Color.BLACK)
+	coord_label.add_theme_font_size_override("font_size", 14)
+	canvas.add_child(coord_label)
+	print("[UI_DEBUG] Coordinate label positioned next to grid controls panel")
 
+func _setup_grid_controls():
+	"""Creează controalele UI pentru grid infinit"""
+	print("[UI_DEBUG] Setting up grid controls...")
+	print("[UI_DEBUG] Canvas available:", canvas != null)
+	print("[UI_DEBUG] Canvas name:", canvas.get_name() if canvas else "N/A")
+	
+	# Creează panelul de grid controls în partea de jos a ecranului pentru a nu se suprapune
+	grid_controls_panel = Panel.new()
+	grid_controls_panel.position = Vector2(10, get_viewport().get_visible_rect().size.y - 120)  # Jos în stânga
+	grid_controls_panel.size = Vector2(200, 80)
+	grid_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
+	canvas.add_child(grid_controls_panel)
+	print("[UI_DEBUG] Grid controls panel created and added to canvas at bottom-left")
 	
 	# Title
 	var title_label = Label.new()
-	title_label.text = "Section Controls"
+	title_label.text = "Grid Controls"
 	title_label.position = Vector2(10, 5)
 	title_label.add_theme_color_override("font_color", Color.BLACK)
-	title_label.add_theme_font_size_override("font_size", 14)
+	title_label.add_theme_font_size_override("font_size", 12)
+	grid_controls_panel.add_child(title_label)
+	
+	# Grid Visibility Checkbox
+	grid_visible_checkbox = CheckBox.new()
+	grid_visible_checkbox.text = "Show Grid"
+	grid_visible_checkbox.position = Vector2(10, 25)
+	grid_visible_checkbox.button_pressed = grid_visible
+	grid_visible_checkbox.toggled.connect(_on_grid_visibility_toggled)
+	grid_controls_panel.add_child(grid_visible_checkbox)
+	
+	# Grid Z Position Label
+	grid_z_label = Label.new()
+	grid_z_label.text = "Grid Z: 0.00"
+	grid_z_label.position = Vector2(10, 50)
+	grid_z_label.add_theme_color_override("font_color", Color.BLACK)
+	grid_z_label.add_theme_font_size_override("font_size", 10)
+	grid_controls_panel.add_child(grid_z_label)
+	
+	# Grid Z Position Slider
+	grid_z_slider = HSlider.new()
+	grid_z_slider.position = Vector2(70, 50)
+	grid_z_slider.size = Vector2(120, 20)
+	grid_z_slider.min_value = -100.0
+	grid_z_slider.max_value = 100.0
+	grid_z_slider.step = 0.01
+	grid_z_slider.value = grid_z_position
+	grid_z_slider.value_changed.connect(_on_grid_z_changed)
+	grid_controls_panel.add_child(grid_z_slider)
+	
+	print("[UI_DEBUG] Grid controls setup complete!")
+	print("[UI_DEBUG] - Panel position:", grid_controls_panel.position, "size:", grid_controls_panel.size)
+	print("[UI_DEBUG] - Checkbox state:", grid_visible_checkbox.button_pressed)
+	print("[UI_DEBUG] - Slider range:", grid_z_slider.min_value, "to", grid_z_slider.max_value, "current:", grid_z_slider.value)
+	print("[UI_DEBUG] - Panel children count:", grid_controls_panel.get_child_count())
 
+# === GRID CALLBACKS ===
+
+func _on_grid_visibility_toggled(button_pressed: bool):
+	"""Toggle grid visibility"""
+	print("[CALLBACK_DEBUG] Grid visibility toggle called - new state:", button_pressed)
+	grid_visible = button_pressed
+	if infinite_grid:
+		infinite_grid.visible = grid_visible
+		print("[CALLBACK_DEBUG] Grid visibility updated - infinite_grid.visible:", infinite_grid.visible)
+	else:
+		print("[CALLBACK_DEBUG] ERROR: infinite_grid is null!")
+	print("[CADViewer] Grid visibility: ", grid_visible)
+
+func _on_grid_z_changed(value: float):
+	"""Update grid Z position"""
+	print("[CALLBACK_DEBUG] Grid Z position changed called - new value:", value)
+	grid_z_position = value
+	# Recreate grid with new Z position
+	if infinite_grid:
+		print("[CALLBACK_DEBUG] Freeing old grid instance...")
+		infinite_grid.queue_free()
+	print("[CALLBACK_DEBUG] Recreating grid at new Z position...")
+	_create_infinite_grid()
+	# Update label
+	if grid_z_label:
+		grid_z_label.text = "Grid Z: %.2f" % grid_z_position
+		print("[CALLBACK_DEBUG] Label updated to:", grid_z_label.text)
+	print("[CADViewer] Grid Z position: ", grid_z_position)
 	
 	# Horizontal Section Z Position
 	var h_z_label = Label.new()
 	h_z_label.text = "H-Section Z:"
 	h_z_label.position = Vector2(10, 55)
 	h_z_label.add_theme_color_override("font_color", Color.BLACK)
-
+	section_controls_panel.add_child(h_z_label)
+	
+	h_section_slider = HSlider.new()
+	h_section_slider.position = Vector2(90, 55)
+	h_section_slider.size = Vector2(120, 20)
+	h_section_slider.min_value = -10.0
+	h_section_slider.max_value = 10.0
+	h_section_slider.step = 0.1
+	h_section_slider.value = horizontal_section_z
+	h_section_slider.value_changed.connect(_on_horizontal_section_z_changed)
+	section_controls_panel.add_child(h_section_slider)
 	
 	# Horizontal Section Depth
 	var h_depth_label = Label.new()
 	h_depth_label.text = "H-Depth:"
 	h_depth_label.position = Vector2(10, 80)
 	h_depth_label.add_theme_color_override("font_color", Color.BLACK)
+	section_controls_panel.add_child(h_depth_label)
 	
+	h_depth_slider = HSlider.new()
+	h_depth_slider.position = Vector2(90, 80)
+	h_depth_slider.size = Vector2(120, 20)
+	h_depth_slider.min_value = 0.5
+	h_depth_slider.max_value = 10.0
+	h_depth_slider.step = 0.1
+	h_depth_slider.value = horizontal_section_depth
+	h_depth_slider.value_changed.connect(_on_horizontal_depth_changed)
+	section_controls_panel.add_child(h_depth_slider)
+	
+	# Vertical Section Toggle
+	vertical_section_toggle = CheckBox.new()
+	vertical_section_toggle.text = "Vertical Section"
+	vertical_section_toggle.position = Vector2(10, 110)
+	vertical_section_toggle.button_pressed = vertical_section_enabled
+	vertical_section_toggle.toggled.connect(_on_vertical_section_toggled)
+	section_controls_panel.add_child(vertical_section_toggle)
 	
 	# Vertical Section X Position
 	var v_x_label = Label.new()
 	v_x_label.text = "V-Section X:"
 	v_x_label.position = Vector2(10, 135)
 	v_x_label.add_theme_color_override("font_color", Color.BLACK)
+	section_controls_panel.add_child(v_x_label)
 	
+	v_section_x_slider = HSlider.new()
+	v_section_x_slider.position = Vector2(90, 135)
+	v_section_x_slider.size = Vector2(120, 20)
+	v_section_x_slider.min_value = -20.0
+	v_section_x_slider.max_value = 20.0
+	v_section_x_slider.step = 0.1
+	v_section_x_slider.value = vertical_section_x
+	v_section_x_slider.value_changed.connect(_on_vertical_section_x_changed)
+	section_controls_panel.add_child(v_section_x_slider)
 	
 	# Vertical Section Y Position
 	var v_y_label = Label.new()
 	v_y_label.text = "V-Section Y:"
 	v_y_label.position = Vector2(10, 160)
 	v_y_label.add_theme_color_override("font_color", Color.BLACK)
+	section_controls_panel.add_child(v_y_label)
 	
+	v_section_y_slider = HSlider.new()
+	v_section_y_slider.position = Vector2(90, 160)
+	v_section_y_slider.size = Vector2(120, 20)
+	v_section_y_slider.min_value = -20.0
+	v_section_y_slider.max_value = 20.0
+	v_section_y_slider.step = 0.1
+	v_section_y_slider.value = vertical_section_y
+	v_section_y_slider.value_changed.connect(_on_vertical_section_y_changed)
+	section_controls_panel.add_child(v_section_y_slider)
 	
 	# Vertical Section Depth
 	var v_depth_label = Label.new()
 	v_depth_label.text = "V-Depth:"
 	v_depth_label.position = Vector2(10, 185)
 	v_depth_label.add_theme_color_override("font_color", Color.BLACK)
+	section_controls_panel.add_child(v_depth_label)
 	
+	v_depth_slider = HSlider.new()
+	v_depth_slider.position = Vector2(90, 185)
+	v_depth_slider.size = Vector2(120, 20)
+	v_depth_slider.min_value = 1.0
+	v_depth_slider.max_value = 20.0
+	v_depth_slider.step = 0.1
+	v_depth_slider.value = vertical_section_depth
+	v_depth_slider.value_changed.connect(_on_vertical_depth_changed)
+	section_controls_panel.add_child(v_depth_slider)
 	
 	print("[CADViewer] Section controls setup complete")
 
@@ -1189,8 +1580,8 @@ func _create_section_planes():
 	# Material pentru planurile de sectiune
 	section_material = StandardMaterial3D.new()
 	section_material.albedo_color = Color(1.0, 0.0, 0.0, 0.3)  # Roșu transparent
-	section_material.flags_transparent = true
-	section_material.flags_unshaded = true
+	section_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	section_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	section_material.cull_mode = BaseMaterial3D.CULL_DISABLED  # Vizibil din ambele părți
 	
 	# Horizontal section plane (XY)
@@ -1316,60 +1707,20 @@ func _apply_section_to_mesh(mesh_instance: MeshInstance3D):
 		var original_color = std_material.albedo_color
 		std_material.albedo_color = Color(original_color.r, original_color.g, original_color.b, original_color.a * fade_factor)
 
-
-func _setup_grid_controls():
-	"""Creează controalele UI pentru grid infinit"""
-	print("[UI_DEBUG] Setting up grid controls...")
-	print("[UI_DEBUG] Canvas available:", canvas != null)
-	print("[UI_DEBUG] Canvas name:", canvas.get_name() if canvas else "N/A")
-	
-	grid_controls_panel = Panel.new()
-	grid_controls_panel.position = Vector2(10, get_viewport().get_visible_rect().size.y - 120)  # Jos în stânga
-	grid_controls_panel.size = Vector2(200, 80)
-	grid_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
-	canvas.add_child(grid_controls_panel)
-	print("[UI_DEBUG] Grid controls panel created and added to canvas")
-	
-	# Title
-	var title_label = Label.new()
-	title_label.text = "Grid Controls"
-	title_label.position = Vector2(10, 5)
-	title_label.add_theme_color_override("font_color", Color.BLACK)
-	title_label.add_theme_font_size_override("font_size", 12)
-	grid_controls_panel.add_child(title_label)
-	
-	# Grid Visibility Checkbox
-	grid_visible_checkbox = CheckBox.new()
-	grid_visible_checkbox.text = "Show Grid"
-	grid_visible_checkbox.position = Vector2(10, 25)
-	grid_visible_checkbox.button_pressed = grid_visible
-	grid_visible_checkbox.toggled.connect(_on_grid_visibility_toggled)
-	grid_controls_panel.add_child(grid_visible_checkbox)
-	
-	# Grid Z Position Label
-	grid_z_label = Label.new()
-	grid_z_label.text = "Grid Z: 0.00"
-	grid_z_label.position = Vector2(10, 50)
-	grid_z_label.add_theme_color_override("font_color", Color.BLACK)
-	grid_z_label.add_theme_font_size_override("font_size", 10)
-	grid_controls_panel.add_child(grid_z_label)
-	
-	# Grid Z Position Slider
-	grid_z_slider = HSlider.new()
-	grid_z_slider.position = Vector2(70, 50)
-	grid_z_slider.size = Vector2(120, 20)
-	grid_z_slider.min_value = -100.0
-	grid_z_slider.max_value = 100.0
-	grid_z_slider.step = 0.01
-	grid_z_slider.value = grid_z_position
-	grid_z_slider.value_changed.connect(_on_grid_z_changed)
-	grid_controls_panel.add_child(grid_z_slider)
-	
-	print("[UI_DEBUG] Grid controls setup complete!")
-	print("[UI_DEBUG] - Panel position:", grid_controls_panel.position, "size:", grid_controls_panel.size)
-	print("[UI_DEBUG] - Checkbox state:", grid_visible_checkbox.button_pressed)
-	print("[UI_DEBUG] - Slider range:", grid_z_slider.min_value, "to", grid_z_slider.max_value, "current:", grid_z_slider.value)
-	print("[UI_DEBUG] - Panel children count:", grid_controls_panel.get_child_count())
+func _create_snap_preview_marker():
+	snap_preview_marker = MeshInstance3D.new()
+	var sphere = SphereMesh.new()
+	sphere.radius = 0.08
+	snap_preview_marker.mesh = sphere
+	var material = StandardMaterial3D.new()
+	material.albedo_color = Color.MAGENTA
+	material.emission_enabled = true
+	material.emission = Color.MAGENTA * 0.5
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	snap_preview_marker.material_override = material
+	snap_preview_marker.visible = false
+	add_child(snap_preview_marker)
 
 func get_snapped_position(world_pos: Vector3) -> Vector3:
 	# Snap logic placeholder (return world_pos direct dacă nu ai snap grid)
@@ -2424,37 +2775,256 @@ func _show_export_message(message: String, success: bool):
 	tween.tween_callback(panel.queue_free.bind())
 	tween.tween_callback(message_label.queue_free.bind())
 
+# === CUT SHADER INTEGRATION METHODS ===
+
+func _setup_cut_shader_integration():
+	"""Inițializează integrarea sistemului cut shader"""
+	print("[CutShader] Setting up cut shader integration...")
+	
+	# Găsește nodul de integrare cut shader
+	cut_shader_integration = get_node_or_null("CutShaderIntegration")
+	if cut_shader_integration:
+		print("[CutShader] Found cut shader integration node")
+		# Conectează semnalele
+		if cut_shader_integration.has_signal("section_dxf_exported"):
+			cut_shader_integration.section_dxf_exported.connect(_on_cut_shader_dxf_exported)
+		if cut_shader_integration.has_signal("cut_shader_preview_updated"):
+			cut_shader_integration.cut_shader_preview_updated.connect(_on_cut_shader_preview_updated)
+	else:
+		print("[CutShader] Cut shader integration node not found")
+	
+	# Inițializează materialul pentru secțiuni
+	_init_section_material()
+	
+	# Setup section controls în UI
+	_setup_section_controls()
+	
+	print("[CutShader] Cut shader integration setup complete")
+
+func _init_section_material():
+	"""Inițializează materialul pentru efectele de secțiune"""
+	section_material = StandardMaterial3D.new()
+	section_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	section_material.albedo_color = Color(1.0, 0.0, 0.0, 0.3)  # Roșu semi-transparent
+	section_material.no_depth_test = false
+	section_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+func _setup_section_controls():
+	"""Creează controalele UI pentru secțiuni"""
+	if not canvas:
+		print("[CutShader] No canvas found for section controls")
+		return
+	
+	# Creează panelul pentru controalele de secțiune
+	section_controls_panel = Panel.new()
+	section_controls_panel.name = "SectionControlsPanel"
+	section_controls_panel.position = Vector2(10, get_viewport().get_visible_rect().size.y - 200)
+	section_controls_panel.size = Vector2(220, 180)
+	section_controls_panel.add_theme_color_override("bg_color", Color(0.1, 0.1, 0.2, 0.9))
+	canvas.add_child(section_controls_panel)
+	
+	var y_offset = 10
+	
+	# Title
+	var title = Label.new()
+	title.text = "Section Controls"
+	title.position = Vector2(10, y_offset)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	title.add_theme_font_size_override("font_size", 12)
+	section_controls_panel.add_child(title)
+	y_offset += 25
+	
+	# Horizontal Section
+	h_section_checkbox = CheckBox.new()
+	h_section_checkbox.text = "Horizontal Section"
+	h_section_checkbox.position = Vector2(10, y_offset)
+	h_section_checkbox.button_pressed = horizontal_section_enabled
+	h_section_checkbox.toggled.connect(_on_horizontal_section_toggled)
+	section_controls_panel.add_child(h_section_checkbox)
+	y_offset += 25
+	
+	# Horizontal Section Z Position
+	var h_z_label = Label.new()
+	h_z_label.text = "H-Section Z:"
+	h_z_label.position = Vector2(10, y_offset)
+	h_z_label.add_theme_color_override("font_color", Color.WHITE)
+	section_controls_panel.add_child(h_z_label)
+	
+	h_section_slider = HSlider.new()
+	h_section_slider.position = Vector2(90, y_offset)
+	h_section_slider.size = Vector2(120, 20)
+	h_section_slider.min_value = -10.0
+	h_section_slider.max_value = 10.0
+	h_section_slider.step = 0.1
+	h_section_slider.value = horizontal_section_z
+	h_section_slider.value_changed.connect(_on_horizontal_section_z_changed)
+	section_controls_panel.add_child(h_section_slider)
+	y_offset += 25
+	
+	# Horizontal Section Depth
+	var h_depth_label = Label.new()
+	h_depth_label.text = "H-Depth:"
+	h_depth_label.position = Vector2(10, y_offset)
+	h_depth_label.add_theme_color_override("font_color", Color.WHITE)
+	section_controls_panel.add_child(h_depth_label)
+	
+	h_depth_slider = HSlider.new()
+	h_depth_slider.position = Vector2(90, y_offset)
+	h_depth_slider.size = Vector2(120, 20)
+	h_depth_slider.min_value = 0.1
+	h_depth_slider.max_value = 5.0
+	h_depth_slider.step = 0.1
+	h_depth_slider.value = horizontal_section_depth
+	h_depth_slider.value_changed.connect(_on_horizontal_depth_changed)
+	section_controls_panel.add_child(h_depth_slider)
+	y_offset += 30
+	
+	# Vertical Section
+	v_section_checkbox = CheckBox.new()
+	v_section_checkbox.text = "Vertical Section"
+	v_section_checkbox.position = Vector2(10, y_offset)
+	v_section_checkbox.button_pressed = vertical_section_enabled
+	v_section_checkbox.toggled.connect(_on_vertical_section_toggled)
+	section_controls_panel.add_child(v_section_checkbox)
+	y_offset += 25
+	
+	# Cut Shader Export Button
+	var export_btn = Button.new()
+	export_btn.text = "Export Cut Shader DXF"
+	export_btn.position = Vector2(10, y_offset)
+	export_btn.size = Vector2(200, 25)
+	export_btn.pressed.connect(_export_cut_shader_dxf)
+	section_controls_panel.add_child(export_btn)
+
+func _get_current_section_data() -> Dictionary:
+	"""Returnează datele curente ale secțiunilor pentru integrarea cut shader"""
+	var section_data = {}
+	
+	if horizontal_section_enabled:
+		section_data["horizontal"] = {
+			"origin": Vector3(0, 0, horizontal_section_z),
+			"normal": Vector3(0, 0, 1),
+			"enabled": true,
+			"depth_range": [horizontal_section_z - horizontal_section_depth/2, 
+							horizontal_section_z + horizontal_section_depth/2]
+		}
+	
+	if vertical_section_enabled:
+		section_data["vertical"] = {
+			"origin": Vector3(vertical_section_x, vertical_section_y, 0),
+			"normal": Vector3(1, 0, 0),  # sau Vector3(0, 1, 0) pentru vertical Y
+			"enabled": true,
+			"depth_range": [vertical_section_x - vertical_section_depth/2,
+							vertical_section_x + vertical_section_depth/2]
+		}
+	
+	# Adaugă informații despre camera pentru secțiuni dinamice
+	if camera:
+		var cam_pos = camera.global_transform.origin
+		var cam_forward = -camera.global_transform.basis.z
+		
+		section_data["camera_section"] = {
+			"origin": cam_pos,
+			"normal": cam_forward,
+			"enabled": true,
+			"depth_range": [0.0, 3.0]
+		}
+	
+	return section_data
+
+func _export_cut_shader_dxf():
+	"""Exportă secțiunea curentă folosind sistemul cut shader"""
+	if not cut_shader_integration:
+		print("[CutShader] Cut shader integration not available")
+		return
+	
+	print("[CutShader] Initiating cut shader DXF export...")
+	
+	# Actualizează datele de secțiune
+	current_section_state = _get_current_section_data()
+	
+	# Apelează sistemul cut shader pentru export
+	if cut_shader_integration.has_method("_export_dxf_section"):
+		cut_shader_integration._export_dxf_section()
+	else:
+		print("[CutShader] Export method not found in cut shader integration")
+
+func _on_cut_shader_dxf_exported(file_path: String):
+	"""Handler pentru semnalul de export DXF completat"""
+	print("[CutShader] DXF export completed: ", file_path)
+	
+	# Afișează mesaj de succes
+	var message = "Cut Shader DXF exported successfully!\nFile: " + file_path.get_file()
+	_show_export_message(message, true)
+
+func _on_cut_shader_preview_updated(preview_data: Dictionary):
+	"""Handler pentru actualizarea preview-ului cut shader"""
+	print("[CutShader] Preview updated: ", preview_data)
+	
+	# Aici poți adăuga logica pentru afișarea preview-ului în viewer
+	# De exemplu, overlay-uri sau highlight-uri pe mesh-uri
+
+func set_section_for_view(view_name: String):
+	"""Setează parametrii de secțiune bazați pe view-ul curent"""
+	match view_name:
+		"top":
+			horizontal_section_enabled = true
+			horizontal_section_z = 1.5  # Secțiune standard la înălțimea camerei
+			_update_section_ui()
+		"front", "back":
+			vertical_section_enabled = true
+			vertical_section_y = 0.0
+			_update_section_ui()
+		"left", "right":
+			vertical_section_enabled = true
+			vertical_section_x = 0.0
+			_update_section_ui()
+		"free":
+			# În view-ul liber, folosește poziția camerei pentru secțiuni dinamice
+			_update_dynamic_sections()
+
+func _update_section_ui():
+	"""Actualizează UI-ul pentru a reflecta starea curentă a secțiunilor"""
+	if h_section_checkbox:
+		h_section_checkbox.button_pressed = horizontal_section_enabled
+	if h_section_slider:
+		h_section_slider.value = horizontal_section_z
+	if h_depth_slider:
+		h_depth_slider.value = horizontal_section_depth
+	if v_section_checkbox:
+		v_section_checkbox.button_pressed = vertical_section_enabled
+
+func _update_dynamic_sections():
+	"""Actualizează secțiunile dinamice bazate pe poziția camerei"""
+	if camera and cut_shader_integration:
+		var cam_pos = camera.global_transform.origin
+		var cam_forward = -camera.global_transform.basis.z
+		
+		# Actualizează secțiunea bazată pe camera
+		horizontal_section_z = cam_pos.z
+		
+		# Sincronizează cu sistemul cut shader
+		if cut_shader_integration.has_method("_sync_with_existing_sections"):
+			cut_shader_integration._sync_with_existing_sections()
+
+# === FUNCȚII UTILITARE LIPSĂ ===
+
+func _update_info_label():
+	"""Actualizează label-ul cu informații despre starea curentă"""
+	if coord_label:
+		var info_text = "Z-Min: %.2f | Z-Max: %.2f | Drawing Plane: %.2f" % [z_min, z_max, drawing_plane_z]
+		coord_label.text = info_text
+
+func _update_z_spinboxes():
+	"""Actualizează controalele UI pentru Z-depth"""
+	# Această funcție ar trebui să actualizeze SpinBox-urile pentru z_min, z_max și drawing_plane_z
+	# Dacă controalele UI există, le actualizează cu valorile curente
+	print("[DEBUG] Z-spinboxes updated: z_min=%.2f, z_max=%.2f, drawing_plane_z=%.2f" % [z_min, z_max, drawing_plane_z])
+
+
+
 func _exit_tree():
 	# Oprește procesul watchdog la ieșire
 	if watchdog_process > 0:
 		OS.kill(watchdog_process)
 		print("[DEBUG] Stopped DXF watchdog process")
-
-# === GRID CALLBACKS ===
-
-func _on_grid_visibility_toggled(button_pressed: bool):
-	"""Toggle grid visibility"""
-	print("[CALLBACK_DEBUG] Grid visibility toggle called - new state:", button_pressed)
-	grid_visible = button_pressed
-	if infinite_grid:
-		infinite_grid.visible = grid_visible
-		print("[CALLBACK_DEBUG] Grid visibility updated - infinite_grid.visible:", infinite_grid.visible)
-	else:
-		print("[CALLBACK_DEBUG] ERROR: infinite_grid is null!")
-	print("[CADViewer] Grid visibility: ", grid_visible)
-
-func _on_grid_z_changed(value: float):
-	"""Update grid Z position"""
-	print("[CALLBACK_DEBUG] Grid Z position changed called - new value:", value)
-	grid_z_position = value
-	# Recreate grid with new Z position
-	if infinite_grid:
-		print("[CALLBACK_DEBUG] Freeing old grid instance...")
-		infinite_grid.queue_free()
-	print("[CALLBACK_DEBUG] Recreating grid at new Z position...")
-	_create_infinite_grid()
-	# Update label
-	if grid_z_label:
-		grid_z_label.text = "Grid Z: %.2f" % grid_z_position
-		print("[CALLBACK_DEBUG] Label updated to:", grid_z_label.text)
-	print("[CADViewer] Grid Z position: ", grid_z_position)
