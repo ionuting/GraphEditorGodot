@@ -1,19 +1,50 @@
 # CADViewer.gd (versiunea îmbunătățită cu snap)
 extends Node3D
 
+# IMMEDIATE DEBUG - This should print as soon as script loads
+func _init():
+	print("🚨 CAD_VIEWER_3D.GD SCRIPT LOADED! _init() called")
+
 @onready var camera: Camera3D = $Camera3D
-@onready var canvas: Control = $CanvasLayer/Panel
+@onready var canvas: CanvasLayer = $CanvasLayer
 
 # Grid & background
-@export var grid_size: int = 20
+@export var grid_size: int = 100
 @export var grid_spacing: float = 1.0
-@export var grid_color: Color = Color(0.8,0.8,0.8)
+@export var grid_color: Color = Color(0.8,0.8,0.8,0.3)
+
+# Infinite Grid settings
+var grid_visible: bool = true
+var grid_z_position: float = 0.0
+var infinite_grid: MeshInstance3D
+var grid_material: StandardMaterial3D
+
 @export var background_color: Color = Color(0.95,0.95,0.95)
 
 # Z-depth and drawing plane settings
 @export var z_min: float = -10.0
 @export var z_max: float = 10.0
 @export var drawing_plane_z: float = 0.0
+
+# === SECTION SYSTEM ===
+@export var section_enabled: bool = false
+@export var horizontal_section_enabled: bool = false
+@export var vertical_section_enabled: bool = false
+
+# Horizontal section settings (XY plane)
+@export var horizontal_section_z: float = 0.0
+@export var horizontal_section_depth: float = 2.0
+
+# Vertical section settings (XZ and YZ planes)
+@export var vertical_section_x: float = 0.0
+@export var vertical_section_y: float = 0.0
+@export var vertical_section_depth: float = 5.0
+
+# Section visualization
+var section_plane_horizontal: MeshInstance3D
+var section_plane_vertical_x: MeshInstance3D
+var section_plane_vertical_y: MeshInstance3D
+var section_material: StandardMaterial3D
 
 # Snap settings
 var snap_enabled: bool = false
@@ -30,13 +61,13 @@ var rotate_last_pos: Vector2
 var is_rotating := false
 var orbit_pivot: Vector3 = Vector3.ZERO
 
-# UI elements
-var coord_label: Label
-var z_controls_panel: Panel
-var _zpanel_dragging: bool = false
-var _zpanel_drag_offset: Vector2 = Vector2.ZERO
-
 var selected_geometry: Node3D = null
+# Grid UI controls
+var grid_controls_panel: Panel
+var grid_visible_checkbox: CheckBox
+var grid_z_slider: HSlider
+var grid_z_label: Label
+
 var default_material: StandardMaterial3D = null
 var layer_materials := {}
 
@@ -47,6 +78,11 @@ var imported_projects := {}
 var current_project_folder: String = ""
 
 func _ready():
+	print("🚨🚨🚨 CAD_VIEWER_3D.GD _ready() FUNCTION STARTED! 🚨🚨🚨")
+	print("=== CAD VIEWER 3D - SCENE STARTUP DEBUG ===")
+	print("[DEBUG] _ready() called - initializing scene...")
+	print("[DEBUG] Grid settings - visible:", grid_visible, "z_position:", grid_z_position, "spacing:", grid_spacing)
+	
 	# Adaugă o lumină direcțională pentru evidențierea voidurilor
 	var dir_light = DirectionalLight3D.new()
 	dir_light.light_color = Color(1, 1, 0.95)
@@ -56,6 +92,7 @@ func _ready():
 
 	dir_light.transform.origin = Vector3(0, 10, 10)
 	add_child(dir_light)
+	print("[DEBUG] DirectionalLight3D added")
 	if canvas == null:
 		var cl = CanvasLayer.new()
 		add_child(cl)
@@ -82,19 +119,20 @@ func _ready():
 			layer_materials[k] = {"color": [v[0], v[1], v[2]], "alpha": v[3]}
 
 	_set_top_view()
+	print("[DEBUG] Camera set to top view")
 
 	var env = Environment.new()
 	env.background_color = background_color
 	env.background_mode = Environment.BG_COLOR
 	camera.environment = env
+	print("[DEBUG] Environment configured with background color:", background_color)
 
 	_create_grid(grid_size, grid_spacing)
-	_create_center_lines(50)
+
 	_setup_ui_buttons()
-	_setup_coordinate_label()
-	_setup_z_controls()
+	_create_section_planes()
 	_update_camera_clipping()
-	_create_snap_preview_marker()
+
 
 	# Conectează semnale pentru Tree (Objects)
 	var tree_node = get_node_or_null("Objects")
@@ -524,6 +562,7 @@ func _print_meshes_and_colors(node: Node, glb_path: String):
 func _on_view_button_pressed(view_name: String):
 	match view_name:
 		"TOP": _set_top_view()
+
 		"FRONT": _set_front_view()
 		"LEFT": _set_left_view()
 		"RIGHT": _set_right_view()
@@ -537,11 +576,13 @@ func _set_top_view():
 	camera.transform.origin = Vector3(0,0,10)
 	camera.look_at(Vector3(0,0,0), Vector3(0,1,0))
 
+
 func _set_front_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(0,-10,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
+
 
 func _set_left_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
@@ -549,11 +590,13 @@ func _set_left_view():
 	camera.transform.origin = Vector3(-10,0,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
 
+
 func _set_right_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = 20
 	camera.transform.origin = Vector3(10,0,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
+
 
 func _set_back_view():
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
@@ -561,11 +604,72 @@ func _set_back_view():
 	camera.transform.origin = Vector3(0,10,0)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
 
+
 func _set_free_view():
 	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	camera.fov = 60
 	camera.transform.origin = Vector3(10,10,10)
 	camera.look_at(Vector3(0,0,0), Vector3(0,0,1))
+
+
+func _on_fit_all_pressed():
+	"""Încadrează toate obiectele în camera curentă"""
+	var bbox = _calculate_scene_bounding_box()
+	if bbox.has_volume():
+		_fit_camera_to_bbox(bbox)
+		print("[CADViewer] Fit All: fitted to bbox ", bbox)
+	else:
+		print("[CADViewer] Fit All: no objects found or invalid bbox")
+
+func _calculate_scene_bounding_box() -> AABB:
+	"""Calculează bounding box-ul întregii scene"""
+	var combined_bbox = AABB()
+	var first_object = true
+	
+	# Parcurge toate copiii pentru a găsi MeshInstance3D
+	for child in get_children():
+		if child is MeshInstance3D:
+			var mesh_instance = child as MeshInstance3D
+			if mesh_instance.mesh != null:
+				var mesh_bbox = mesh_instance.get_aabb()
+				# Transformă bbox-ul în spațiul global
+				mesh_bbox = mesh_instance.transform * mesh_bbox
+				
+				if first_object:
+					combined_bbox = mesh_bbox
+					first_object = false
+				else:
+					combined_bbox = combined_bbox.merge(mesh_bbox)
+	
+	return combined_bbox
+
+func _fit_camera_to_bbox(bbox: AABB):
+	"""Pozitionează camera pentru a încadra bbox-ul"""
+	var bbox_center = bbox.get_center()
+	var bbox_size = bbox.size
+	
+	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
+		# Pentru camera ortogonală, calculează dimensiunea necesară
+		var max_extent = max(bbox_size.x, max(bbox_size.y, bbox_size.z))
+		camera.size = max_extent * 1.2  # 20% padding
+		
+		# Păstrează direcția curentă a camerei, dar centrează pe bbox
+		var current_forward = -camera.transform.basis.z
+		var distance = max_extent * 2.0  # Distanța optimă
+		camera.transform.origin = bbox_center - current_forward * distance
+		camera.look_at(bbox_center, Vector3.UP)
+		
+	else:
+		# Pentru camera perspective
+		var max_extent = bbox_size.length()
+		var distance = max_extent * 1.5  # Distanța pentru perspective
+		
+		var current_forward = -camera.transform.basis.z
+		camera.transform.origin = bbox_center - current_forward * distance
+		camera.look_at(bbox_center, Vector3.UP)
+
+# === SECTION INTEGRATION WITH VIEWS ===
+
 
 # Grid creation
 func _create_grid(size: int, spacing: float):
@@ -589,28 +693,80 @@ func _create_grid(size: int, spacing: float):
 	arrays[Mesh.ARRAY_COLOR] = colors
 	var mesh = ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+	
+	# Create material with transparency support
+	var grid_material = StandardMaterial3D.new()
+	grid_material.flags_transparent = true
+	grid_material.vertex_color_use_as_albedo = true
+	grid_material.no_depth_test = false
+	grid_material.flags_do_not_use_depth_prepass = true
+	
 	var grid_instance = MeshInstance3D.new()
 	grid_instance.mesh = mesh
+	grid_instance.material_override = grid_material
 	add_child(grid_instance)
 
-func _create_center_lines(size: float):
-	var mesh = ArrayMesh.new()
-	var verts = PackedVector3Array([
-		Vector3(-size, 0, drawing_plane_z), Vector3(size, 0, drawing_plane_z),
-		Vector3(0, -size, drawing_plane_z), Vector3(0, size, drawing_plane_z)
-	])
-	var colors = PackedColorArray([
-		Color.RED, Color.RED,
-		Color.GREEN, Color.GREEN
-	])
+
+# Grid creation
+func _create_infinite_grid():
+	"""Creează un grid infinit cu linii vizibile"""
+	print("[GRID_DEBUG] Starting infinite grid creation...")
+	print("[GRID_DEBUG] Grid parameters - size: 500, spacing:", grid_spacing, "z_position:", grid_z_position, "visible:", grid_visible)
+	print("[GRID_DEBUG] Grid color:", grid_color)
+	
+	# Creează liniile grid-ului într-un mod dinamic și mare
+	var vertices = PackedVector3Array()
+	var colors = PackedColorArray()
+	
+	# Grid foarte mare pentru efectul "infinit"
+	var grid_size = 500  # Mult mai mare decât înainte
+	var spacing = grid_spacing
+	
+	# Linii pe X (paralele cu axa X)
+	for i in range(-grid_size, grid_size + 1):
+		vertices.append(Vector3(-grid_size * spacing, i * spacing, grid_z_position))
+		vertices.append(Vector3(grid_size * spacing, i * spacing, grid_z_position))
+		colors.append(grid_color)
+		colors.append(grid_color)
+	
+	# Liniile pe Y (paralele cu axa Y) 
+	for i in range(-grid_size, grid_size + 1):
+		vertices.append(Vector3(i * spacing, -grid_size * spacing, grid_z_position))
+		vertices.append(Vector3(i * spacing, grid_size * spacing, grid_z_position))
+		colors.append(grid_color)
+		colors.append(grid_color)
+	
+	# Creează mesh-ul
 	var arrays = []
 	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh = ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
-	var axes = MeshInstance3D.new()
-	axes.mesh = mesh
-	add_child(axes)
+	
+	# Creează material transparent
+	grid_material = StandardMaterial3D.new()
+	grid_material.flags_transparent = true
+	grid_material.vertex_color_use_as_albedo = true
+	grid_material.flags_unshaded = true
+	grid_material.no_depth_test = false
+	grid_material.flags_do_not_use_depth_prepass = true
+	
+	# Creează instanța
+	infinite_grid = MeshInstance3D.new()
+	infinite_grid.mesh = mesh
+	infinite_grid.material_override = grid_material
+	infinite_grid.position.z = grid_z_position
+	infinite_grid.visible = grid_visible
+	add_child(infinite_grid)
+	
+	print("[GRID_DEBUG] Infinite grid MeshInstance3D created successfully!")
+	print("[GRID_DEBUG] Grid stats: ", vertices.size() / 2, " lines, mesh surfaces:", mesh.get_surface_count())
+	print("[GRID_DEBUG] Grid position:", infinite_grid.position)
+	print("[GRID_DEBUG] Grid visible:", infinite_grid.visible)
+	print("[GRID_DEBUG] Grid material transparent:", grid_material.flags_transparent)
+	print("[GRID_DEBUG] Grid added to scene tree as child of:", get_name())
+	print("[CADViewer] Infinite grid created with ", vertices.size() / 2, " lines at Z=", grid_z_position)
 
 # Input handling cu snap
 func _unhandled_input(event):
@@ -647,10 +803,6 @@ func _unhandled_input(event):
 		var delta = event.position - rotate_last_pos
 		_orbit_camera(delta, orbit_pivot)
 		rotate_last_pos = event.position
-
-	if event is InputEventMouseMotion:
-		_update_coordinate_display()
-		_update_snap_preview()
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
@@ -689,6 +841,8 @@ func _unhandled_input(event):
 					csg.material_override = sel_mat
 				print("[DEBUG] Selected geometry: ", selected_geometry)
 
+
+
 func _update_snap_preview():
 	if not snap_enabled:
 		snap_preview_marker.visible = false
@@ -704,50 +858,15 @@ func _update_snap_preview():
 	else:
 		snap_preview_marker.visible = false
 
-# Z-depth control callbacks
-func _on_z_min_changed(value: float):
-	z_min = value
-	_update_camera_clipping()
-	_update_info_label()
 
-func _on_z_max_changed(value: float):
-	z_max = value
-	_update_camera_clipping()
-	_update_info_label()
-
-func _on_drawing_plane_z_changed(value: float):
-	drawing_plane_z = value
-	_update_drawing_plane_visual()
 
 func _set_ground_level():
 	drawing_plane_z = 0.0
 	z_min = -2.0
 	z_max = 5.0
-	_update_z_spinboxes()
 	_update_camera_clipping()
 	_update_drawing_plane_visual()
 
-func _set_floor1_level():
-	drawing_plane_z = 3.0
-	z_min = 1.0
-	z_max = 8.0
-	_update_z_spinboxes()
-	_update_camera_clipping()
-	_update_drawing_plane_visual()
-
-func _update_z_spinboxes():
-	var z_min_spin = z_controls_panel.get_children()[3] as SpinBox
-	var z_max_spin = z_controls_panel.get_children()[5] as SpinBox
-	var draw_z_spin = z_controls_panel.get_children()[7] as SpinBox
-	
-	if z_min_spin: z_min_spin.value = z_min
-	if z_max_spin: z_max_spin.value = z_max
-	if draw_z_spin: draw_z_spin.value = drawing_plane_z
-
-func _update_info_label():
-	var info_label = z_controls_panel.get_node("info_label") as Label
-	if info_label:
-		info_label.text = "Visible: %.1f to %.1f" % [z_min, z_max]
 
 func _update_camera_clipping():
 	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
@@ -763,16 +882,12 @@ func _update_camera_clipping():
 func _update_drawing_plane_visual():
 	_clear_grid_and_axes()
 	_create_grid(grid_size, grid_spacing)
-	_create_center_lines(50)
+
 
 func _clear_grid_and_axes():
 	for child in get_children():
 		if child is MeshInstance3D and child != camera and child != snap_preview_marker:
 			child.queue_free()
-
-func _update_coordinate_display():
-	var world_pos = get_mouse_pos_in_xy()
-	coord_label.text = "X: %.2f, Y: %.2f, Z: %.2f" % [world_pos.x, world_pos.y, drawing_plane_z]
 
 func _zoom_at_mouse(factor: float):
 	var world_before = get_mouse_pos_in_xy()
@@ -986,53 +1101,275 @@ func _set_visibility_element(file, group, elem, visible):
 
 	
 func _setup_ui_buttons():
-	# Creează butoane de view preset
+	print("[UI_DEBUG] Setting up UI buttons...")
+	
+	# Obține referința la panelul din dreapta din scene
+	var right_panel = canvas.get_node_or_null("Panel")
+	if not right_panel:
+		print("[UI_DEBUG] ERROR: Right panel not found! Creating buttons in canvas instead.")
+		right_panel = canvas
+	else:
+		print("[UI_DEBUG] Right panel found - size:", right_panel.size, "position:", right_panel.position)
+	
+	# Creează butoane de view preset în panelul din dreapta
 	var names = ["TOP","FRONT","LEFT","RIGHT","BACK","FREE 3D"]
 	for i in range(len(names)):
 		var btn = Button.new()
 		btn.text = names[i]
-		btn.position = Vector2(10, 10 + i*35)
-		btn.size = Vector2(100, 30)
+		# Poziționează butoanele în panel (poziții relative la panel)
+		btn.position = Vector2(5, 5 + i*25)  # Poziții relative la panel
+		btn.size = Vector2(80, 22)  # Butoane mai mici pentru a încăpea în panel
 		btn.pressed.connect(Callable(self, "_on_view_button_pressed").bind(names[i]))
-		canvas.add_child(btn)
+		right_panel.add_child(btn)
+		print("[UI_DEBUG] Added button:", names[i], "at position:", btn.position)
+	
+	# Creează butonul Fit All în panelul din dreapta
+	var fit_all_btn = Button.new()
+	fit_all_btn.text = "FIT ALL"
+	fit_all_btn.position = Vector2(5, 5 + len(names)*25)  # Sub ultimul buton
+	fit_all_btn.size = Vector2(80, 22)
+	fit_all_btn.pressed.connect(Callable(self, "_on_fit_all_pressed"))
+	fit_all_btn.add_theme_color_override("font_color", Color.WHITE)
+	fit_all_btn.add_theme_color_override("font_color_pressed", Color.WHITE)
+	fit_all_btn.modulate = Color(0.2, 0.6, 0.8)  # Culoare albastră
+	right_panel.add_child(fit_all_btn)
+	print("[UI_DEBUG] Added FIT ALL button at position:", fit_all_btn.position)
+	
+	print("[UI_DEBUG] UI buttons setup complete - all buttons added to right panel")
 
-func _setup_coordinate_label():
-	coord_label = Label.new()
-	coord_label.text = "X: 0.0, Y: 0.0, Z: 0.0"
-	coord_label.position = Vector2(10, get_viewport().get_visible_rect().size.y - 50)
-	coord_label.size = Vector2(300, 30)
-	coord_label.add_theme_color_override("font_color", Color.BLACK)
-	coord_label.add_theme_font_size_override("font_size", 14)
-	canvas.add_child(coord_label)
 
-func _setup_z_controls():
-	z_controls_panel = Panel.new()
-	var y_offset = 10 + (6 * 35) + 20
-	z_controls_panel.position = Vector2(10, y_offset)
-	z_controls_panel.size = Vector2(240, 160)
-	z_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
-	canvas.add_child(z_controls_panel)
+	
+	# Title
 	var title_label = Label.new()
-	title_label.text = "Z-Depth Controls"
+	title_label.text = "Section Controls"
+	title_label.position = Vector2(10, 5)
+	title_label.add_theme_color_override("font_color", Color.BLACK)
+	title_label.add_theme_font_size_override("font_size", 14)
+
+	
+	# Horizontal Section Z Position
+	var h_z_label = Label.new()
+	h_z_label.text = "H-Section Z:"
+	h_z_label.position = Vector2(10, 55)
+	h_z_label.add_theme_color_override("font_color", Color.BLACK)
+
+	
+	# Horizontal Section Depth
+	var h_depth_label = Label.new()
+	h_depth_label.text = "H-Depth:"
+	h_depth_label.position = Vector2(10, 80)
+	h_depth_label.add_theme_color_override("font_color", Color.BLACK)
+	
+	
+	# Vertical Section X Position
+	var v_x_label = Label.new()
+	v_x_label.text = "V-Section X:"
+	v_x_label.position = Vector2(10, 135)
+	v_x_label.add_theme_color_override("font_color", Color.BLACK)
+	
+	
+	# Vertical Section Y Position
+	var v_y_label = Label.new()
+	v_y_label.text = "V-Section Y:"
+	v_y_label.position = Vector2(10, 160)
+	v_y_label.add_theme_color_override("font_color", Color.BLACK)
+	
+	
+	# Vertical Section Depth
+	var v_depth_label = Label.new()
+	v_depth_label.text = "V-Depth:"
+	v_depth_label.position = Vector2(10, 185)
+	v_depth_label.add_theme_color_override("font_color", Color.BLACK)
+	
+	
+	print("[CADViewer] Section controls setup complete")
+
+func _create_section_planes():
+	"""Creează planurile vizuale pentru sectiuni"""
+	# Material pentru planurile de sectiune
+	section_material = StandardMaterial3D.new()
+	section_material.albedo_color = Color(1.0, 0.0, 0.0, 0.3)  # Roșu transparent
+	section_material.flags_transparent = true
+	section_material.flags_unshaded = true
+	section_material.cull_mode = BaseMaterial3D.CULL_DISABLED  # Vizibil din ambele părți
+	
+	# Horizontal section plane (XY)
+	section_plane_horizontal = MeshInstance3D.new()
+	var plane_mesh_h = PlaneMesh.new()
+	plane_mesh_h.size = Vector2(50, 50)  # Dimensiune mare pentru a acoperi scena
+	section_plane_horizontal.mesh = plane_mesh_h
+	section_plane_horizontal.material_override = section_material
+	section_plane_horizontal.visible = false
+	add_child(section_plane_horizontal)
+	
+	# Vertical section plane X (YZ)
+	section_plane_vertical_x = MeshInstance3D.new()
+	var plane_mesh_vx = PlaneMesh.new()
+	plane_mesh_vx.size = Vector2(50, 50)
+	section_plane_vertical_x.mesh = plane_mesh_vx
+	section_plane_vertical_x.material_override = section_material.duplicate()
+	section_plane_vertical_x.material_override.albedo_color = Color(0.0, 1.0, 0.0, 0.3)  # Verde
+	section_plane_vertical_x.rotation_degrees = Vector3(0, 0, 90)  # Rotire pentru YZ plane
+	section_plane_vertical_x.visible = false
+	add_child(section_plane_vertical_x)
+	
+	# Vertical section plane Y (XZ)
+	section_plane_vertical_y = MeshInstance3D.new()
+	var plane_mesh_vy = PlaneMesh.new()
+	plane_mesh_vy.size = Vector2(50, 50)
+	section_plane_vertical_y.mesh = plane_mesh_vy
+	section_plane_vertical_y.material_override = section_material.duplicate()
+	section_plane_vertical_y.material_override.albedo_color = Color(0.0, 0.0, 1.0, 0.3)  # Albastru
+	section_plane_vertical_y.rotation_degrees = Vector3(90, 0, 0)  # Rotire pentru XZ plane
+	section_plane_vertical_y.visible = false
+	add_child(section_plane_vertical_y)
+	
+	print("[CADViewer] Section planes created")
+
+# === SECTION CALLBACKS ===
+
+func _on_horizontal_section_toggled(button_pressed: bool):
+	"""Toggle horizontal section"""
+	horizontal_section_enabled = button_pressed
+	section_plane_horizontal.visible = button_pressed
+	_update_section_effects()
+	print("[CADViewer] Horizontal section: ", button_pressed)
+
+func _on_vertical_section_toggled(button_pressed: bool):
+	"""Toggle vertical section"""
+	vertical_section_enabled = button_pressed
+	section_plane_vertical_x.visible = button_pressed
+	section_plane_vertical_y.visible = button_pressed
+	_update_section_effects()
+	print("[CADViewer] Vertical section: ", button_pressed)
+
+func _on_horizontal_section_z_changed(value: float):
+	"""Update horizontal section Z position"""
+	horizontal_section_z = value
+	section_plane_horizontal.position.z = value
+	_update_section_effects()
+
+func _on_horizontal_depth_changed(value: float):
+	"""Update horizontal section depth"""
+	horizontal_section_depth = value
+	_update_section_effects()
+
+func _on_vertical_section_x_changed(value: float):
+	"""Update vertical section X position"""
+	vertical_section_x = value
+	section_plane_vertical_x.position.x = value
+	_update_section_effects()
+
+func _on_vertical_section_y_changed(value: float):
+	"""Update vertical section Y position"""
+	vertical_section_y = value
+	section_plane_vertical_y.position.y = value
+	_update_section_effects()
+
+func _on_vertical_depth_changed(value: float):
+	"""Update vertical section depth"""
+	vertical_section_depth = value
+	_update_section_effects()
+
+func _update_section_effects():
+	"""Aplicare efecte de sectiune la toate obiectele din scenă"""
+	_apply_section_to_node(self)
+
+func _apply_section_to_node(node: Node):
+	"""Aplică efectele de sectiune recursiv la un nod și copiii săi"""
+	# Pentru MeshInstance3D nodes, aplică shader-ul de sectiune
+	if node is MeshInstance3D:
+		_apply_section_to_mesh(node)
+	
+	# Continuă recursiv pentru copii
+	for child in node.get_children():
+		_apply_section_to_node(child)
+
+func _apply_section_to_mesh(mesh_instance: MeshInstance3D):
+	"""Aplică efectul de sectiune la un MeshInstance3D"""
+	if not mesh_instance.material_override:
+		return
+	
+	var material = mesh_instance.material_override
+	if material is StandardMaterial3D:
+		var std_material = material as StandardMaterial3D
+		
+		# Calculează efectul de fade bazat pe distanța de la planurile de sectiune
+		var mesh_pos = mesh_instance.global_position
+		var fade_factor = 1.0
+		
+		# Horizontal section fade
+		if horizontal_section_enabled:
+			var distance_to_h_plane = abs(mesh_pos.z - horizontal_section_z)
+			if distance_to_h_plane > horizontal_section_depth / 2.0:
+				fade_factor *= 0.3  # Fade out
+		
+		# Vertical section fade  
+		if vertical_section_enabled:
+			var distance_to_v_plane_x = abs(mesh_pos.x - vertical_section_x)
+			var distance_to_v_plane_y = abs(mesh_pos.y - vertical_section_y)
+			
+			if distance_to_v_plane_x > vertical_section_depth / 2.0 or distance_to_v_plane_y > vertical_section_depth / 2.0:
+				fade_factor *= 0.3  # Fade out
+		
+		# Aplică fade factor la material
+		var original_color = std_material.albedo_color
+		std_material.albedo_color = Color(original_color.r, original_color.g, original_color.b, original_color.a * fade_factor)
+
+
+func _setup_grid_controls():
+	"""Creează controalele UI pentru grid infinit"""
+	print("[UI_DEBUG] Setting up grid controls...")
+	print("[UI_DEBUG] Canvas available:", canvas != null)
+	print("[UI_DEBUG] Canvas name:", canvas.get_name() if canvas else "N/A")
+	
+	grid_controls_panel = Panel.new()
+	grid_controls_panel.position = Vector2(10, get_viewport().get_visible_rect().size.y - 120)  # Jos în stânga
+	grid_controls_panel.size = Vector2(200, 80)
+	grid_controls_panel.add_theme_color_override("bg_color", Color(0.9, 0.9, 0.9, 0.8))
+	canvas.add_child(grid_controls_panel)
+	print("[UI_DEBUG] Grid controls panel created and added to canvas")
+	
+	# Title
+	var title_label = Label.new()
+	title_label.text = "Grid Controls"
 	title_label.position = Vector2(10, 5)
 	title_label.add_theme_color_override("font_color", Color.BLACK)
 	title_label.add_theme_font_size_override("font_size", 12)
-	z_controls_panel.add_child(title_label)
-
-func _create_snap_preview_marker():
-	snap_preview_marker = MeshInstance3D.new()
-	var sphere = SphereMesh.new()
-	sphere.radius = 0.08
-	snap_preview_marker.mesh = sphere
-	var material = StandardMaterial3D.new()
-	material.albedo_color = Color.MAGENTA
-	material.emission_enabled = true
-	material.emission = Color.MAGENTA * 0.5
-	material.flags_transparent = true
-	material.flags_unshaded = true
-	snap_preview_marker.material_override = material
-	snap_preview_marker.visible = false
-	add_child(snap_preview_marker)
+	grid_controls_panel.add_child(title_label)
+	
+	# Grid Visibility Checkbox
+	grid_visible_checkbox = CheckBox.new()
+	grid_visible_checkbox.text = "Show Grid"
+	grid_visible_checkbox.position = Vector2(10, 25)
+	grid_visible_checkbox.button_pressed = grid_visible
+	grid_visible_checkbox.toggled.connect(_on_grid_visibility_toggled)
+	grid_controls_panel.add_child(grid_visible_checkbox)
+	
+	# Grid Z Position Label
+	grid_z_label = Label.new()
+	grid_z_label.text = "Grid Z: 0.00"
+	grid_z_label.position = Vector2(10, 50)
+	grid_z_label.add_theme_color_override("font_color", Color.BLACK)
+	grid_z_label.add_theme_font_size_override("font_size", 10)
+	grid_controls_panel.add_child(grid_z_label)
+	
+	# Grid Z Position Slider
+	grid_z_slider = HSlider.new()
+	grid_z_slider.position = Vector2(70, 50)
+	grid_z_slider.size = Vector2(120, 20)
+	grid_z_slider.min_value = -100.0
+	grid_z_slider.max_value = 100.0
+	grid_z_slider.step = 0.01
+	grid_z_slider.value = grid_z_position
+	grid_z_slider.value_changed.connect(_on_grid_z_changed)
+	grid_controls_panel.add_child(grid_z_slider)
+	
+	print("[UI_DEBUG] Grid controls setup complete!")
+	print("[UI_DEBUG] - Panel position:", grid_controls_panel.position, "size:", grid_controls_panel.size)
+	print("[UI_DEBUG] - Checkbox state:", grid_visible_checkbox.button_pressed)
+	print("[UI_DEBUG] - Slider range:", grid_z_slider.min_value, "to", grid_z_slider.max_value, "current:", grid_z_slider.value)
+	print("[UI_DEBUG] - Panel children count:", grid_controls_panel.get_child_count())
 
 func get_snapped_position(world_pos: Vector3) -> Vector3:
 	# Snap logic placeholder (return world_pos direct dacă nu ai snap grid)
@@ -2092,3 +2429,32 @@ func _exit_tree():
 	if watchdog_process > 0:
 		OS.kill(watchdog_process)
 		print("[DEBUG] Stopped DXF watchdog process")
+
+# === GRID CALLBACKS ===
+
+func _on_grid_visibility_toggled(button_pressed: bool):
+	"""Toggle grid visibility"""
+	print("[CALLBACK_DEBUG] Grid visibility toggle called - new state:", button_pressed)
+	grid_visible = button_pressed
+	if infinite_grid:
+		infinite_grid.visible = grid_visible
+		print("[CALLBACK_DEBUG] Grid visibility updated - infinite_grid.visible:", infinite_grid.visible)
+	else:
+		print("[CALLBACK_DEBUG] ERROR: infinite_grid is null!")
+	print("[CADViewer] Grid visibility: ", grid_visible)
+
+func _on_grid_z_changed(value: float):
+	"""Update grid Z position"""
+	print("[CALLBACK_DEBUG] Grid Z position changed called - new value:", value)
+	grid_z_position = value
+	# Recreate grid with new Z position
+	if infinite_grid:
+		print("[CALLBACK_DEBUG] Freeing old grid instance...")
+		infinite_grid.queue_free()
+	print("[CALLBACK_DEBUG] Recreating grid at new Z position...")
+	_create_infinite_grid()
+	# Update label
+	if grid_z_label:
+		grid_z_label.text = "Grid Z: %.2f" % grid_z_position
+		print("[CALLBACK_DEBUG] Label updated to:", grid_z_label.text)
+	print("[CADViewer] Grid Z position: ", grid_z_position)
