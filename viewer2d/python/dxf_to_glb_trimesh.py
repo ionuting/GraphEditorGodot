@@ -33,6 +33,61 @@ except ImportError as e:
     print(f"[WARNING] IFC GLB Converter indisponibil: {e}")
     IFC_GLB_CONVERSION_AVAILABLE = False
 
+# Import pentru procesorul door/window
+try:
+    from door_window_processor import DoorWindowProcessor
+    DOOR_WINDOW_PROCESSOR_AVAILABLE = True
+    print("[DEBUG] Door/Window Processor disponibil")
+except ImportError as e:
+    print(f"[WARNING] Door/Window Processor indisponibil: {e}")
+    DOOR_WINDOW_PROCESSOR_AVAILABLE = False
+
+# -----------------------------
+# Extragerea Z global din numele fișierului
+# -----------------------------
+def extract_global_z_from_filename(file_path):
+    """
+    Extrage valoarea Z globală din numele fișierului DXF.
+    Caută ultimul număr după ultimul '_' în numele fișierului.
+    
+    Args:
+        file_path: calea către fișierul DXF
+    
+    Returns:
+        float: Valoarea Z globală sau 0.0 dacă nu poate fi extrasă
+    
+    Examples:
+        "nivel1_2.80.dxf" -> 2.80
+        "etaj2_-1.75.dxf" -> -1.75
+        "basement_0.00.dxf" -> 0.00
+        "multiple_underscores_3.25.dxf" -> 3.25
+        "simple.dxf" -> 0.0 (fallback)
+    """
+    try:
+        # Extrage numele fișierului fără extensie
+        filename = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Caută ultimul '_' în numele fișierului
+        underscore_pos = filename.rfind('_')
+        if underscore_pos == -1:
+            print(f"[DEBUG] No underscore found in filename '{filename}', using Z global = 0.0")
+            return 0.0
+        
+        # Extrage partea după ultimul '_'
+        z_part = filename[underscore_pos + 1:]
+        
+        # Încearcă să parseze ca număr float
+        # Poate fi format ca "-1.75" sau "2.80" etc.
+        global_z = float(z_part)
+        
+        print(f"[DEBUG] Extracted global Z from filename '{filename}': {global_z}")
+        return global_z
+        
+    except (ValueError, IndexError) as e:
+        print(f"[DEBUG] Could not extract global Z from filename '{file_path}': {e}")
+        print(f"[DEBUG] Using default global Z = 0.0")
+        return 0.0
+
 # -----------------------------
 # Evaluare formule matematice
 # -----------------------------
@@ -98,8 +153,11 @@ def get_material(layer):
 # -----------------------------
 # Funcții pentru control spațial cu cercuri
 # -----------------------------
-def read_control_circles(doc, layer="control"):
-    """Citește cercurile de control cu Z din XDATA pentru formele spațiale."""
+def read_control_circles(doc, layer="control", global_z=0.0):
+    """
+    Citește cercurile de control cu Z din XDATA pentru formele spațiale.
+    Z-ul din XDATA este relativ la global_z din numele fișierului.
+    """
     msp = doc.modelspace()
     control_points = []
 
@@ -108,19 +166,21 @@ def read_control_circles(doc, layer="control"):
 
     for c in circles:
         x, y = float(c.dxf.center[0]), float(c.dxf.center[1])
-        z_value = 0.0
+        z_relative = 0.0  # Z relativ din XDATA
 
         if c.has_xdata:
             try:
                 xdata = c.get_xdata("QCAD")
                 for code, value in xdata:
                     if code == 1000 and isinstance(value, str) and value.startswith("z:"):
-                        z_value = float(value.split(":")[1])
+                        z_relative = float(value.split(":")[1])
             except Exception as e:
                 print(f"[DEBUG] Eroare XDATA pentru cerc de control ({x:.2f}, {y:.2f}): {e}")
 
-        control_points.append((x, y, z_value))
-        print(f"[DEBUG] Cerc de control ({x:.2f}, {y:.2f}) -> z={z_value}")
+        # Calculează Z final: global_z + z_relative
+        z_final = global_z + z_relative
+        control_points.append((x, y, z_final))
+        print(f"[DEBUG] Cerc de control ({x:.2f}, {y:.2f}) -> z_relative={z_relative:.2f}, z_final={z_final:.2f} (global_z={global_z:.2f})")
 
     return control_points
 
@@ -1000,11 +1060,638 @@ def apply_xyz_rotations(mesh, rotate_x, rotate_y, rotate_z=0.0):
         return mesh
 
 # -----------------------------
+# Procesare blocuri Door/Window cu logica TOV/FOV
+# -----------------------------
+def process_door_window_block(doc, insert_entity, global_z, mesh_name_count, mapping, solids, voids, control_points=None):
+    """
+    Procesează un bloc Door/Window TOV folosind geometria FOV din biblioteci.
+    
+    Args:
+        doc: Documentul DXF
+        insert_entity: Entitatea INSERT care conține blocul TOV
+        global_z: Z global pentru nivel
+        mesh_name_count: Counter pentru nume mesh-uri
+        mapping: Lista de mapping pentru IFC
+        solids: Lista mesh-urilor solide
+        voids: Lista mesh-urilor void
+        control_points: Puncte de control opționale
+    
+    Returns:
+        bool: True dacă blocul a fost procesat cu succes
+    """
+    if not DOOR_WINDOW_PROCESSOR_AVAILABLE:
+        return False
+        
+    try:
+        # Inițializează procesorul
+        processor = DoorWindowProcessor()
+        
+        # Extrage datele TOV din INSERT entity
+        block_name = getattr(insert_entity.dxf, "name", "")
+        insert_point = getattr(insert_entity.dxf, "insert", None)
+        rotation_angle = getattr(insert_entity.dxf, "rotation", 0.0)
+        scale_x = getattr(insert_entity.dxf, "xscale", 1.0)
+        scale_y = getattr(insert_entity.dxf, "yscale", 1.0)
+        scale_z = getattr(insert_entity.dxf, "zscale", 1.0)
+        handle = getattr(insert_entity, 'handle', 'unknown')
+        xdata = getattr(insert_entity, 'xdata', {})
+        
+        if not insert_point or not block_name.endswith('_TOV'):
+            return False
+            
+        print(f"[DEBUG] ===== Processing Door/Window TOV: {block_name} =====")
+        print(f"[DEBUG] TOV Position: ({insert_point.x:.2f}, {insert_point.y:.2f})")
+        print(f"[DEBUG] TOV Rotation: {rotation_angle:.1f}°")
+        tov_layer = getattr(insert_entity.dxf, 'layer', 'unknown')
+        print(f"[DEBUG] TOV Layer: {tov_layer}")
+        
+        # Determină tipul bibliotecii
+        base_name = processor._get_base_name(block_name)
+        lib_type = 'doors' if base_name.lower().startswith('door') else 'windows'
+        fov_name = base_name + '_FOV'
+        
+        print(f"[DEBUG] Expected library type: {lib_type}")
+        print(f"[DEBUG] Expected FOV name: {fov_name}")
+        print(f"[DEBUG] Base name: {base_name}")
+        
+        # Încarcă biblioteca corespunzătoare
+        if not processor.load_library(lib_type):
+            print(f"[WARNING] Could not load {lib_type} library")
+            return False
+        else:
+            print(f"[DEBUG] Successfully loaded {lib_type} library")
+            
+        # Debug: afișează toate blocurile din bibliotecă
+        if lib_type in processor.library_blocks:
+            blocks_in_lib = list(processor.library_blocks[lib_type].keys())
+            print(f"[DEBUG] Available blocks in {lib_type} library: {blocks_in_lib}")
+            
+        # Verifică dacă există FOV în bibliotecă
+        if fov_name not in processor.library_blocks[lib_type]:
+            print(f"[WARNING] FOV block {fov_name} not found in {lib_type} library")
+            return False
+        else:
+            print(f"[DEBUG] Found FOV block {fov_name} in {lib_type} library")
+            
+        # Extrage datele TOV
+        tov_data = processor.extract_tov_data(insert_entity, doc)
+        if not tov_data:
+            print(f"[ERROR] Failed to extract TOV data from {block_name}")
+            return False
+            
+        # Extrage geometria FOV din bibliotecă
+        fov_block = processor.library_blocks[lib_type][fov_name]['block']
+        fov_doc = processor.library_blocks[lib_type][fov_name]['doc']
+        fov_geometry = processor.extract_fov_geometry(fov_block, fov_doc, lib_type)
+        
+        if not fov_geometry:
+            print(f"[ERROR] Failed to extract FOV geometry from {fov_name}")
+            return False
+            
+        print(f"[DEBUG] Found {len(fov_geometry)} layers in FOV: {list(fov_geometry.keys())}")
+        
+        # Procesează fiecare layer din FOV
+        for layer_name, layer_data in fov_geometry.items():
+            entities = layer_data['entities']
+            thickness = layer_data['thickness']
+            solid_flag = layer_data['solid']
+            
+            print(f"[DEBUG] Processing FOV layer '{layer_name}': {len(entities)} entities, thickness={thickness}, solid={solid_flag}")
+            
+            # Verifică și ajustează thickness-ul pentru vizibilitate
+            if thickness < 0.05:
+                thickness = 0.15  # Minimum thickness pentru vizibilitate
+                print(f"[DEBUG] Adjusted thickness to {thickness} for better visibility")
+            
+            # Procesează entitățile din layer folosind logica existentă
+            for entity in entities:
+                try:
+                    # Procesează entitatea ca și cum ar fi în planul principal
+                    # dar cu transformările de la TOV
+                    entity_type = entity.dxftype()
+                    
+                    if entity_type in ["LWPOLYLINE", "POLYLINE", "LINE", "ARC", "CIRCLE"]:
+                        # Creează mesh-ul pentru entitate
+                        mesh_name = f"{base_name}_{layer_name}_{entity_type}"
+                        print(f"[DEBUG] Creating mesh from {entity_type} entity in layer {layer_name}, solid={solid_flag}")
+                        mesh = create_mesh_from_entity(entity, thickness, solid_flag, mesh_name)
+                        
+                        if mesh and len(mesh.vertices) > 0:
+                            # APLICĂ TRANSFORMĂRILE ÎN ORDINEA CORECTĂ:
+                            
+                            # 1. Scalare la origine (0,0,0)
+                            if scale_x != 1.0 or scale_y != 1.0 or scale_z != 1.0:
+                                scale_matrix = np.eye(4)
+                                scale_matrix[0, 0] = scale_x
+                                scale_matrix[1, 1] = scale_y  
+                                scale_matrix[2, 2] = scale_z
+                                mesh.apply_transform(scale_matrix)
+                                print(f"[DEBUG] Applied scaling: ({scale_x:.2f}, {scale_y:.2f}, {scale_z:.2f})")
+                            
+                            # 2. Rotație la origine (0,0,0) - pentru DXF INSERT entities este în jurul axei Z
+                            if abs(tov_data['rotation']) > 0.01:  # Doar dacă rotația este semnificativă
+                                angle_rad = np.radians(tov_data['rotation'])
+                                rotation_matrix = trimesh.transformations.rotation_matrix(angle_rad, [0, 0, 1], [0, 0, 0])
+                                mesh.apply_transform(rotation_matrix)
+                                print(f"[DEBUG] Applied Z-axis rotation: {tov_data['rotation']:.1f}° around origin")
+                            
+                            # 3. Translație la poziția finală în world space
+                            final_position = [
+                                tov_data['position'][0],
+                                tov_data['position'][1],
+                                tov_data['position'][2]
+                            ]
+                            mesh.apply_translation(final_position)
+                            print(f"[DEBUG] Applied final translation to: ({final_position[0]:.2f}, {final_position[1]:.2f}, {final_position[2]:.2f})")
+                            
+                            # Adaugă mesh-ul la listele corespunzătoare
+                            # Păstrează numele real al layer-ului ca material pentru diferențiere
+                            material_name = layer_name  # Păstrează 'IfcDoor', 'wood', 'glass' separate
+                            mesh_entry = {
+                                "mesh": mesh,
+                                "material": material_name,
+                                "block_name": f"DoorWindow_{base_name}_{layer_name}",
+                                "insert_position": {
+                                    "x": float(tov_data['position'][0]),
+                                    "y": float(tov_data['position'][1]),
+                                    "z": float(tov_data['position'][2])
+                                },
+                                "rotation_angle": float(tov_data['rotation']),
+                                "layer": layer_name,
+                                "solid": solid_flag
+                            }
+                            print(f"[DEBUG] Assigned material '{material_name}' to layer '{layer_name}'")
+                            
+                            if solid_flag:
+                                solids.append(mesh_entry)
+                            else:
+                                voids.append(mesh_entry)
+                                
+                            # Adaugă în mapping pentru IFC
+                            mapping_entry = create_ifc_mapping_entry(
+                                mesh_entry, handle, xdata, base_name, "door" if lib_type == "doors" else "window"
+                            )
+                            mapping.append(mapping_entry)
+                            
+                            # Incrementează counter pentru mesh-uri
+                            if 'count' not in mesh_name_count:
+                                mesh_name_count['count'] = 0
+                            mesh_name_count['count'] += 1
+                            print(f"[DEBUG] Added Door/Window mesh: {layer_name} ({'solid' if solid_flag else 'void'})")
+                            
+                except Exception as e:
+                    print(f"[WARNING] Error processing FOV entity {entity_type}: {e}")
+                    import traceback
+                    print(f"[DEBUG] Full error: {traceback.format_exc()}")
+                    continue
+                    
+        # După procesarea tuturor entităților, creează mesh-uri separate per material
+        if solids or voids:
+            print(f"[DEBUG] Creating separate meshes per material from {len(solids)} solids and {len(voids)} voids")
+            
+            # Grupează mesh-urile după material
+            material_groups = {}
+            
+            # Grupează solid-urile (doar cele din TOV processing care sunt dicționare)
+            tov_solids = []
+            tov_voids = []
+            
+            # Separă TOV entries (dicționare) de mesh-urile normale (Trimesh objects)
+            for solid in solids:
+                if isinstance(solid, dict) and 'mesh' in solid:
+                    # TOV entry - dicționar cu mesh și metadate
+                    tov_solids.append(solid)
+                # Ignoră mesh-urile normale (Trimesh direct) - nu sunt din TOV
+            
+            for void in voids:
+                if isinstance(void, dict) and 'mesh' in void:
+                    # TOV entry - dicționar cu mesh și metadate
+                    tov_voids.append(void)
+                # Ignoră mesh-urile normale - nu sunt din TOV
+            
+            print(f"[DEBUG] Found {len(tov_solids)} TOV solids and {len(tov_voids)} TOV voids from {len(solids)}+{len(voids)} total")
+            
+            # Grupează TOV solid-urile după material
+            for solid in tov_solids:
+                material = solid.get('material', 'default')
+                if material not in material_groups:
+                    material_groups[material] = {'solids': [], 'voids': []}
+                material_groups[material]['solids'].append(solid)
+            
+            # Grupează TOV void-urile (pot afecta toate materialele)
+            for void in tov_voids:
+                void_material = void.get('material', 'glass')
+                # Void-urile se aplică asupra tuturor materialelor solide
+                for material in material_groups:
+                    if material_groups[material]['solids']:  # Doar dacă există solids
+                        material_groups[material]['voids'].append(void)
+            
+            print(f"[DEBUG] Found {len(material_groups)} material groups: {list(material_groups.keys())}")
+            
+            # Creează mesh-uri separate pentru fiecare material
+            for material, group in material_groups.items():
+                group_solids = group['solids']
+                group_voids = group['voids']
+                
+                if not group_solids:
+                    continue
+                    
+                print(f"[DEBUG] Processing material '{material}': {len(group_solids)} solids, {len(group_voids)} voids")
+                
+                # Combină mesh-urile din același material
+                if len(group_solids) == 1 and not group_voids:
+                    # Un singur solid, fără voids
+                    final_mesh = group_solids[0]['mesh']
+                    print(f"[DEBUG] Using single mesh for material '{material}'")
+                else:
+                    # Multiple solids sau cu voids - aplică Boolean operations
+                    final_mesh = combine_tov_meshes(group_solids, group_voids, f"{base_name}_{material}")
+                
+                if final_mesh:
+                    # Creează entry pentru mesh-ul final
+                    material_entry = {
+                        "mesh": final_mesh,
+                        "name": f"{base_name}_{material}",
+                        "material": material,
+                        "layer": group_solids[0]['layer'],  # Folosește layer-ul primului solid
+                        "solid": 1
+                    }
+                    
+                    # Adaugă în solids (va fi preluat în funcția apelantă)
+                    solids.append(material_entry)
+                    
+                    # Creează mapping entry pentru material
+                    mapping_entry = {
+                        "mesh_name": f"DoorWindow_{base_name}_{material}",
+                        "uuid": str(__import__('uuid').uuid4()),
+                        "ifc_type": f"Ifc{'Door' if lib_type == 'doors' else 'Window'}",
+                        "name": f"{base_name}_{material}",
+                        "material": material,
+                        "position": {
+                            "x": tov_data['position'][0],
+                            "y": tov_data['position'][1],
+                            "z": tov_data['position'][2]
+                        },
+                        "rotation": tov_data['rotation'],
+                        "layer": material_entry['layer'],
+                        "solid": 1,
+                        "handle": handle,
+                        "xdata": str(xdata) if xdata else None  # Convert to string for JSON
+                    }
+                    mapping.append(mapping_entry)
+                    
+                    print(f"[DEBUG] Successfully created TOV mesh for material '{material}': {len(final_mesh.vertices)} vertices")
+            
+            # Curăță listele originale (păstrează doar mesh-urile finale)
+            original_count = len(solids) + len(voids)
+            final_count = len(material_groups)
+            
+            # Păstrează doar ultimele mesh-uri (cele per material)
+            solids[:] = solids[-final_count:] if final_count <= len(solids) else solids
+            voids.clear()  # Clear all individual voids
+            
+            print(f"[DEBUG] Reduced {original_count} individual meshes to {final_count} material-based meshes")
+        
+        print(f"[DEBUG] Successfully processed Door/Window TOV: {block_name}")
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] Error processing Door/Window block {block_name}: {e}")
+        return False
+
+def arc_to_points(entity, segments=16):
+    """
+    Convertește un ARC în listă de puncte
+    """
+    try:
+        center = entity.dxf.center
+        radius = entity.dxf.radius
+        start_angle = entity.dxf.start_angle
+        end_angle = entity.dxf.end_angle
+        
+        # Normalizează unghiurile în radiani
+        start_rad = np.radians(start_angle)
+        end_rad = np.radians(end_angle)
+        
+        # Gestionează arcele care trec peste 0°
+        if end_rad < start_rad:
+            end_rad += 2 * np.pi
+            
+        angle_range = end_rad - start_rad
+        angle_step = angle_range / segments
+        
+        points = []
+        for i in range(segments + 1):
+            angle = start_rad + i * angle_step
+            x = center.x + radius * np.cos(angle)
+            y = center.y + radius * np.sin(angle)
+            points.append((x, y))
+            
+        return points
+        
+    except Exception as e:
+        print(f"[WARNING] Error converting arc to points: {e}")
+        return []
+
+def manual_mesh_combine(mesh1, mesh2):
+    """
+    Combină manual două mesh-uri prin concatenarea vertices și faces
+    """
+    try:
+        import numpy as np
+        
+        # Combină vertices
+        vertices = np.vstack([mesh1.vertices, mesh2.vertices])
+        
+        # Ajustează indices pentru faces din mesh2
+        faces1 = mesh1.faces
+        faces2 = mesh2.faces + len(mesh1.vertices)  # Offset pentru vertices din mesh2
+        
+        # Combină faces
+        faces = np.vstack([faces1, faces2])
+        
+        # Creează noul mesh
+        combined = trimesh.Trimesh(vertices=vertices, faces=faces)
+        return combined
+        
+    except Exception as e:
+        print(f"[WARNING] Manual mesh combine failed: {e}")
+        return mesh1  # Return original if combine fails
+
+def combine_tov_meshes(solids, voids, base_name):
+    """
+    Combină mesh-urile solid și aplică operațiile de void pentru TOV complex geometry
+    """
+    try:
+        if not solids:
+            print(f"[WARNING] No solid meshes to combine for {base_name}")
+            return None
+            
+        # Începe cu primul mesh solid
+        combined = solids[0]['mesh'].copy()
+        print(f"[DEBUG] Starting with solid mesh: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+        
+        # Combină toate mesh-urile solid prin uniune
+        for i, solid_entry in enumerate(solids[1:], 1):
+            try:
+                solid_mesh = solid_entry['mesh']
+                print(f"[DEBUG] Combining solid {i}: {len(solid_mesh.vertices)} vertices")
+                
+                # Verifică că mesh-ul este valid
+                if len(solid_mesh.vertices) > 0 and len(solid_mesh.faces) > 0:
+                    try:
+                        # Încearcă cu motorul implicit trimesh (fără Blender)
+                        combined = combined.union(solid_mesh)
+                        print(f"[DEBUG] Union result: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+                    except Exception as union_error:
+                        print(f"[DEBUG] Union failed, merging geometries manually: {union_error}")
+                        # Fallback: combină manual vertices și faces
+                        combined = manual_mesh_combine(combined, solid_mesh)
+                        print(f"[DEBUG] Manual combine result: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+                    
+            except Exception as e:
+                print(f"[DEBUG] Could not union solid {i}, continuing: {e}")
+                continue
+        
+        # Aplică operațiile de void (substracting)
+        for i, void_entry in enumerate(voids):
+            try:
+                void_mesh = void_entry['mesh']
+                print(f"[DEBUG] Subtracting void {i}: {len(void_mesh.vertices)} vertices")
+                
+                # Verifică că mesh-ul este valid
+                if len(void_mesh.vertices) > 0 and len(void_mesh.faces) > 0:
+                    try:
+                        # Încearcă cu motorul implicit trimesh
+                        combined = combined.difference(void_mesh)
+                        print(f"[DEBUG] Difference result: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+                    except Exception as diff_error:
+                        print(f"[DEBUG] Difference failed, skipping void operation: {diff_error}")
+                        # Pentru void-uri, putem ignora dacă Boolean operation-ul nu reușește
+                        continue
+                    
+            except Exception as e:
+                print(f"[DEBUG] Could not subtract void {i}, continuing: {e}")
+                continue
+        
+        # Verifică rezultatul final
+        if hasattr(combined, 'vertices') and len(combined.vertices) > 0:
+            print(f"[DEBUG] Final combined mesh: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+            return combined
+        else:
+            print(f"[WARNING] Combined mesh is empty or invalid for {base_name}")
+            return solids[0]['mesh']  # Return original if combination fails
+            
+    except Exception as e:
+        print(f"[ERROR] Error combining TOV meshes for {base_name}: {e}")
+        import traceback
+        print(f"[DEBUG] Full traceback: {traceback.format_exc()}")
+        return solids[0]['mesh'] if solids else None
+
+def create_mesh_from_entity(entity, thickness, solid_flag, mesh_name):
+    """
+    Creează mesh din entitate folosind logica existentă de procesare
+    """
+    try:
+        entity_type = entity.dxftype()
+        mesh = None
+        
+        if entity_type == "LWPOLYLINE":
+            points = lwpolyline_to_points(entity, 16)
+            closed = getattr(entity, "closed", False)
+            if closed and len(points) >= 3:
+                poly = Polygon(points)
+                if poly.is_valid and poly.area > 0:
+                    # Pentru TOV entities, distinge între doors și windows
+                    if thickness < 0.5:  # Thin meshes sunt de obicei din procesarea TOV
+                        if 'door' in mesh_name.lower():
+                            # Pentru uși, păstrează thickness-ul subțire pentru tăiere în pereți
+                            # Ușile sunt de obicei void-uri care taie pereții
+                            mesh = extrude_polygon(poly, max(thickness, 0.2))  # Minimum 20cm pentru uși
+                            print(f"[DEBUG] Door mesh kept thin: {thickness:.2f} -> {max(thickness, 0.2):.2f} for wall cutting")
+                        else:
+                            # Pentru ferestre și alte elemente, îmbunătățește înălțimea
+                            height = max(thickness, 2.5)  # Minimum înălțime realistă pentru ferestre
+                            mesh = extrude_polygon(poly, height)
+                            print(f"[DEBUG] Enhanced window/other mesh height from {thickness:.2f} to {height:.2f}")
+                    else:
+                        mesh = extrude_polygon(poly, thickness)
+                    
+        elif entity_type == "POLYLINE":
+            # Similar cu LWPOLYLINE dar pentru POLYLINE vechi
+            points = []
+            for vertex in entity.vertices:
+                points.append((vertex.dxf.location.x, vertex.dxf.location.y))
+            
+            if len(points) >= 3:
+                # Verifică dacă este închis
+                closed = entity.is_closed or (len(points) > 2 and 
+                    abs(points[0][0] - points[-1][0]) < 1e-6 and 
+                    abs(points[0][1] - points[-1][1]) < 1e-6)
+                    
+                if closed:
+                    if points[0] != points[-1]:
+                        points.append(points[0])  # Închide poligonul
+                    poly = Polygon(points[:-1])  # Exclude ultimul punct duplicat
+                    if poly.is_valid and poly.area > 0:
+                        mesh = extrude_polygon(poly, thickness)
+                        
+        elif entity_type == "LINE":
+            # Pentru LINE, creează o geometrie subțire (rectangulară)
+            start = entity.dxf.start
+            end = entity.dxf.end
+            
+            # Calculează un vector perpendicular pentru lățime
+            dx = end.x - start.x
+            dy = end.y - start.y
+            length = (dx**2 + dy**2)**0.5
+            
+            if length > 1e-6:
+                # Vector perpendicular normalizat cu lățime mică
+                width = min(0.1, thickness * 0.1)  # Lățime mică pentru linii
+                px = -dy / length * width * 0.5
+                py = dx / length * width * 0.5
+                
+                # Creează un rectangle subțire
+                points = [
+                    (start.x + px, start.y + py),
+                    (end.x + px, end.y + py),
+                    (end.x - px, end.y - py),
+                    (start.x - px, start.y - py)
+                ]
+                
+                poly = Polygon(points)
+                if poly.is_valid and poly.area > 0:
+                    mesh = extrude_polygon(poly, thickness)
+                    
+        elif entity_type == "ARC":
+            # Pentru ARC, discretizează în segmente
+            arc_segments = 16
+            points = arc_to_points(entity, arc_segments)
+            
+            if len(points) >= 2:
+                # Pentru arc, creează o cale subțire
+                width = min(0.1, thickness * 0.1)
+                # Creează o cale cu lățime mică de-a lungul arcului
+                # Pentru simplitate, tratează ca pe o linie între primul și ultimul punct
+                start_point = points[0]
+                end_point = points[-1]
+                
+                dx = end_point[0] - start_point[0]
+                dy = end_point[1] - start_point[1]
+                length = (dx**2 + dy**2)**0.5
+                
+                if length > 1e-6:
+                    px = -dy / length * width * 0.5
+                    py = dx / length * width * 0.5
+                    
+                    rect_points = [
+                        (start_point[0] + px, start_point[1] + py),
+                        (end_point[0] + px, end_point[1] + py),
+                        (end_point[0] - px, end_point[1] - py),
+                        (start_point[0] - px, start_point[1] - py)
+                    ]
+                    
+                    poly = Polygon(rect_points)
+                    if poly.is_valid and poly.area > 0:
+                        mesh = extrude_polygon(poly, thickness)
+                        
+        elif entity_type == "CIRCLE":
+            # Pentru CIRCLE, creează un cilindru
+            center = entity.dxf.center
+            radius = entity.dxf.radius
+            
+            if radius > 1e-6:
+                # Creează un cerc discretizat
+                circle_segments = 32
+                angle_step = 2 * np.pi / circle_segments
+                points = []
+                
+                for i in range(circle_segments):
+                    angle = i * angle_step
+                    x = center.x + radius * np.cos(angle)
+                    y = center.y + radius * np.sin(angle)
+                    points.append((x, y))
+                
+                poly = Polygon(points)
+                if poly.is_valid and poly.area > 0:
+                    mesh = extrude_polygon(poly, thickness)
+        
+        if mesh is not None and len(mesh.vertices) > 0:
+            print(f"[DEBUG] Created mesh for {entity_type}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+            return mesh
+        else:
+            print(f"[WARNING] Failed to create mesh for {entity_type}")
+            return None
+            
+    except Exception as e:
+        print(f"[ERROR] Error creating mesh from {entity_type}: {e}")
+        return None
+
+def get_material_for_layer(layer_name):
+    """
+    Returnează materialul pentru un layer bazat pe maparea existentă
+    """
+    layer_material_map = {
+        'IfcDoor': 'wood',
+        'IfcWindow': 'glass', 
+        'glass': 'glass',
+        'wood': 'wood',
+        'window': 'glass',
+        'door': 'wood',
+        # Adaugă mai multe variații pentru door/window layers
+        'door_frame': 'wood',
+        'door_panel': 'wood', 
+        'window_frame': 'wood',
+        'window_glass': 'glass',
+        'window_sash': 'wood',
+        # Pentru layere din library care încep cu diferite prefixe
+        'Door': 'wood',
+        'Window': 'glass'
+    }
+    
+    # Verifică și după prefixe dacă nu găsește exact
+    layer_lower = layer_name.lower()
+    if 'door' in layer_lower:
+        return 'wood'
+    elif 'window' in layer_lower:
+        return 'glass' if 'glass' in layer_lower else 'wood'
+    elif 'glass' in layer_lower:
+        return 'glass'
+    elif 'wood' in layer_lower:
+        return 'wood'
+    
+    return layer_material_map.get(layer_name, 'default')
+
+def create_ifc_mapping_entry(mesh_entry, handle, xdata, element_name, element_type):
+    """
+    Creează intrarea de mapping pentru IFC conform formatului existent
+    """
+    import uuid
+    return {
+        "mesh_name": mesh_entry.get("name", element_name),
+        "uuid": str(uuid.uuid4()),  # Adaugă uuid pentru compatibilitate cu restul mapping-ului
+        "ifc_type": f"Ifc{element_type.capitalize()}",
+        "name": element_name,
+        "material": mesh_entry.get("material", "default"),
+        "position": {
+            "x": tov_data['position'][0] if 'tov_data' in locals() else 0.0,
+            "y": tov_data['position'][1] if 'tov_data' in locals() else 0.0, 
+            "z": tov_data['position'][2] if 'tov_data' in locals() else 0.0
+        },
+        "rotation": tov_data['rotation'] if 'tov_data' in locals() else 0.0,
+        "layer": mesh_entry.get("layer", "unknown"),
+        "solid": mesh_entry.get("solid", 1),
+        "handle": handle,
+        "xdata": str(xdata) if xdata else None
+    }
+
+# -----------------------------
 # Procesare geometrie din blocuri
 # -----------------------------
 def process_block_geometry(doc, block_layout, insert_point, rotation_angle, 
                           scale_x, scale_y, scale_z, layer, insert_handle,
-                          insert_xdata, mesh_name_count, mapping, solids, voids, control_points=None):
+                          insert_xdata, mesh_name_count, mapping, solids, voids, control_points=None, global_z=0.0):
     """
     Procesează geometria dintr-un bloc DXF cu rotația în jurul punctului de inserție.
     
@@ -1024,10 +1711,10 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
     """
     
     # Parsează XDATA de pe entitatea INSERT pentru parametri globali de bloc
-    def parse_insert_xdata(xdata_dict):
+    def parse_insert_xdata(xdata_dict, global_z):
         rotate_x_global = 0.0
         rotate_y_global = 0.0
-        z_global = 0.0
+        z_relative = 0.0  # Z relativ la global_z
         block_solid_flag = 1  # Implicit solid, doar dacă e explicit 0 devine void
         
         for appid_data in xdata_dict.values():
@@ -1046,7 +1733,7 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                             pass
                     elif sval.startswith("z:"):
                         try:
-                            z_global = float(sval.split(":")[1])
+                            z_relative = float(sval.split(":")[1])
                         except Exception:
                             pass
                     elif sval.startswith("solid:"):
@@ -1055,9 +1742,11 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                         except Exception:
                             pass
         
-        return rotate_x_global, rotate_y_global, z_global, block_solid_flag
+        # Calculează Z final: global_z + z_relative
+        z_final = global_z + z_relative
+        return rotate_x_global, rotate_y_global, z_final, z_relative, block_solid_flag
     
-    rotate_x_global, rotate_y_global, z_global, block_solid_flag = parse_insert_xdata(insert_xdata)
+    rotate_x_global, rotate_y_global, z_final, z_relative, block_solid_flag = parse_insert_xdata(insert_xdata, global_z)
     
     if abs(rotate_x_global) > 1e-6 or abs(rotate_y_global) > 1e-6:
         print(f"[DEBUG] Block global rotations: X={rotate_x_global:.1f}°, Y={rotate_y_global:.1f}°")
@@ -1067,8 +1756,8 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
     if block_is_void:
         print(f"[DEBUG] Block configured as VOID (solid:0) - will cut IfcWall and IfcCovering")
     
-    # Punctul de origine pentru rotații (punctul de inserție cu Z global)
-    rotation_origin = np.array([insert_point.x, insert_point.y, z_global])
+    # Punctul de origine pentru rotații (punctul de inserție cu Z final)
+    rotation_origin = np.array([insert_point.x, insert_point.y, z_final])
     
     # Procesează fiecare entitate din bloc
     for entity in block_layout:
@@ -1095,13 +1784,14 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 pass
         
         # Parsează parametrii entității din bloc (doar proprietăți geometrice)
-        def parse_entity_xdata(xdata_list):
+        def parse_entity_xdata(xdata_list, global_z):
             height = 1.0  # Înălțimea extrudării
             name_str = ""  # Numele elementului
             solid_flag = 1  # Solid/void flag
             angle = 0.0  # Unghiul planului înclinat
             rotate90 = False  # Rotația cu 90° în jurul primului segment
             opening_area_formula = ""  # Formula pentru Opening_area (pentru IfcSpace)
+            z_relative = 0.0  # Z relativ din XDATA
             
             for code, value in xdata_list:
                 if code == 1000:
@@ -1109,6 +1799,11 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                     if sval.startswith("height:"):
                         try:
                             height = float(sval.split(":")[1])
+                        except Exception:
+                            pass
+                    elif sval.startswith("z:"):
+                        try:
+                            z_relative = float(sval.split(":")[1])
                         except Exception:
                             pass
                     elif sval.startswith("Name:"):
@@ -1131,10 +1826,12 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                     elif sval.startswith("Opening_area:"):
                         opening_area_formula = sval.split(":", 1)[1].strip()
             
-            return height, name_str, solid_flag, angle, rotate90, opening_area_formula
+            # Calculează Z final pentru entitatea din bloc
+            z_final = global_z + z_relative
+            return height, z_final, z_relative, name_str, solid_flag, angle, rotate90, opening_area_formula
         
-        height, name_str, solid_flag, angle, rotate90, opening_area_formula = parse_entity_xdata(
-            entity_xdata.get("QCAD", [])
+        height, z_final_entity, z_relative_entity, name_str, solid_flag, angle, rotate90, opening_area_formula = parse_entity_xdata(
+            entity_xdata.get("QCAD", []), global_z
         )
         
         # Rotațiile finale sunt doar cele globale de pe bloc (nu mai adunăm cu elementele)
@@ -1185,32 +1882,36 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                         mesh = extrude_polygon(poly, height)
                     
                     if mesh is not None:
-                        # Scalare
+                        # NOUA ORDINEA TRANSFORMĂRILOR:
+                        # 1. Scalare la origine (0,0,0)
                         if abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6 or abs(scale_z - 1.0) > 1e-6:
                             scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                             mesh.apply_transform(scale_matrix)
-                        
-                        # Translație la poziția globală
-                        # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
-                        z_position = z_global
-                        if "IfcColumn" in ifc_type:
-                            z_position = 0.0  # Coloanele încep de la sol
-                            print(f"[DEBUG] Coloana LWPOLYLINE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
-                        
-                        mesh.apply_translation([insert_point.x, insert_point.y, z_position])
-                        
-                        # Rotația blocului în jurul axei Z (din DXF)
+                            print(f"[DEBUG] Applied scaling: X={scale_x:.3f}, Y={scale_y:.3f}, Z={scale_z:.3f}")
+
+                        # 2. Rotația blocului în jurul axei Z la origine (0,0,0)
                         if abs(rotation_angle) > 1e-6:
                             z_rotation_matrix = trimesh.transformations.rotation_matrix(
-                                np.radians(rotation_angle), [0, 0, 1], rotation_origin
+                                np.radians(rotation_angle), [0, 0, 1], [0, 0, 0]
                             )
                             mesh.apply_transform(z_rotation_matrix)
-                        
-                        # Rotațiile XYZ în jurul punctului de inserție
+                            print(f"[DEBUG] Applied Z rotation: {rotation_angle:.1f}° around origin")
+
+                        # 3. Rotațiile XYZ la origine (0,0,0)
                         if abs(final_rotate_x) > 1e-6 or abs(final_rotate_y) > 1e-6:
                             mesh = apply_xyz_rotations_around_point(
-                                mesh, final_rotate_x, final_rotate_y, 0.0, rotation_origin
+                                mesh, final_rotate_x, final_rotate_y, 0.0, [0, 0, 0]
                             )
+
+                        # 4. Translația la poziția finală în world space
+                        z_position = z_final_entity
+                        if "IfcColumn" in ifc_type:
+                            z_position = global_z  # Coloanele încep de la nivelul global
+                            print(f"[DEBUG] Coloana LWPOLYLINE {mesh_name}: z_final_entity={z_final_entity:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
+
+                        final_position = [insert_point.x, insert_point.y, z_position]
+                        mesh.apply_translation(final_position)
+                        print(f"[DEBUG] Applied final translation to: {final_position}")
                         
         elif ent_type == "POLYLINE":
             points = polyline_to_points(entity, 16)
@@ -1229,32 +1930,36 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                         mesh = extrude_polygon(poly, height)
                     
                     if mesh is not None:
-                        # Scalare
+                        # NOUA ORDINEA TRANSFORMĂRILOR:
+                        # 1. Scalare la origine (0,0,0)
                         if abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6 or abs(scale_z - 1.0) > 1e-6:
                             scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                             mesh.apply_transform(scale_matrix)
-                        
-                        # Translație la poziția globală
-                        # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
-                        z_position = z_global
-                        if "IfcColumn" in ifc_type:
-                            z_position = 0.0  # Coloanele încep de la sol
-                            print(f"[DEBUG] Coloana POLYLINE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
-                        
-                        mesh.apply_translation([insert_point.x, insert_point.y, z_position])
-                        
-                        # Rotația blocului în jurul axei Z (din DXF)
+                            print(f"[DEBUG] Applied scaling: X={scale_x:.3f}, Y={scale_y:.3f}, Z={scale_z:.3f}")
+
+                        # 2. Rotația blocului în jurul axei Z la origine (0,0,0)
                         if abs(rotation_angle) > 1e-6:
                             z_rotation_matrix = trimesh.transformations.rotation_matrix(
-                                np.radians(rotation_angle), [0, 0, 1], rotation_origin
+                                np.radians(rotation_angle), [0, 0, 1], [0, 0, 0]
                             )
                             mesh.apply_transform(z_rotation_matrix)
-                        
-                        # Rotațiile XYZ în jurul punctului de inserție
+                            print(f"[DEBUG] Applied Z rotation: {rotation_angle:.1f}° around origin")
+
+                        # 3. Rotațiile XYZ la origine (0,0,0)
                         if abs(final_rotate_x) > 1e-6 or abs(final_rotate_y) > 1e-6:
                             mesh = apply_xyz_rotations_around_point(
-                                mesh, final_rotate_x, final_rotate_y, 0.0, rotation_origin
+                                mesh, final_rotate_x, final_rotate_y, 0.0, [0, 0, 0]
                             )
+
+                        # 4. Translația la poziția finală în world space
+                        z_position = z_final_entity
+                        if "IfcColumn" in ifc_type:
+                            z_position = global_z  # Coloanele încep de la nivelul global
+                            print(f"[DEBUG] Coloana POLYLINE {mesh_name}: z_final_entity={z_final_entity:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
+
+                        final_position = [insert_point.x, insert_point.y, z_position]
+                        mesh.apply_translation(final_position)
+                        print(f"[DEBUG] Applied final translation to: {final_position}")
         
         elif ent_type == "CIRCLE" and hasattr(entity, "dxf"):
             center = (entity.dxf.center.x, entity.dxf.center.y)
@@ -1277,32 +1982,36 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                     mesh = extrude_polygon(poly, height)
                 
                 if mesh is not None:
-                    # Scalare
+                    # NOUA ORDINEA TRANSFORMĂRILOR:
+                    # 1. Scalare la origine (0,0,0)
                     if abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6 or abs(scale_z - 1.0) > 1e-6:
                         scale_matrix = np.diag([scale_x, scale_y, scale_z, 1.0])
                         mesh.apply_transform(scale_matrix)
-                    
-                    # Translație la poziția globală
-                    # Pentru coloane, z_global ar trebui să fie 0 (baza la sol)
-                    z_position = z_global
-                    if "IfcColumn" in ifc_type:
-                        z_position = 0.0  # Coloanele încep de la sol
-                        print(f"[DEBUG] Coloana CIRCLE {mesh_name}: z_global={z_global:.3f} -> z_position=0.000 (baza la sol)")
-                    
-                    mesh.apply_translation([insert_point.x, insert_point.y, z_position])
-                    
-                    # Rotația blocului în jurul axei Z (din DXF)
+                        print(f"[DEBUG] Applied scaling: X={scale_x:.3f}, Y={scale_y:.3f}, Z={scale_z:.3f}")
+
+                    # 2. Rotația blocului în jurul axei Z la origine (0,0,0)
                     if abs(rotation_angle) > 1e-6:
                         z_rotation_matrix = trimesh.transformations.rotation_matrix(
-                            np.radians(rotation_angle), [0, 0, 1], rotation_origin
+                            np.radians(rotation_angle), [0, 0, 1], [0, 0, 0]
                         )
                         mesh.apply_transform(z_rotation_matrix)
-                    
-                    # Rotațiile XYZ în jurul punctului de inserție
+                        print(f"[DEBUG] Applied Z rotation: {rotation_angle:.1f}° around origin")
+
+                    # 3. Rotațiile XYZ la origine (0,0,0)
                     if abs(final_rotate_x) > 1e-6 or abs(final_rotate_y) > 1e-6:
                         mesh = apply_xyz_rotations_around_point(
-                            mesh, final_rotate_x, final_rotate_y, 0.0, rotation_origin
+                            mesh, final_rotate_x, final_rotate_y, 0.0, [0, 0, 0]
                         )
+
+                    # 4. Translația la poziția finală în world space
+                    z_position = z_final_entity
+                    if "IfcColumn" in ifc_type:
+                        z_position = global_z  # Coloanele încep de la nivelul global
+                        print(f"[DEBUG] Coloana CIRCLE {mesh_name}: z_final_entity={z_final_entity:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
+
+                    final_position = [insert_point.x, insert_point.y, z_position]
+                    mesh.apply_translation(final_position)
+                    print(f"[DEBUG] Applied final translation to: {final_position}")
         
         # Adaugă mesh-ul la lista corespunzătoare și mapping
         if mesh is not None:
@@ -1378,8 +2087,11 @@ def process_block_geometry(doc, block_layout, insert_point, rotation_angle,
                 "insert_position": {  # Poziția world a blocului
                     "x": float(insert_point.x),
                     "y": float(insert_point.y),
-                    "z": z_global
+                    "z": z_final  # Z final calculat (global_z + z_relative)
                 },
+                "z_relative": z_relative,  # Z relativ din XDATA
+                "global_z": global_z,      # Z global din numele fișierului
+                "z_list": [global_z, z_final_entity],  # Lista cu Z global și Z final pentru componentă
                 "component_name": name_str,  # Numele componentei din XDATA
                 "angle": angle,  # Parametri de pe elementul din bloc
                 "height": height,  # Parametri de pe elementul din bloc (grosimea)
@@ -1963,6 +2675,10 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
     print(f"[DEBUG] Start DXF to GLB: {dxf_path} -> {out_path}")
     start_time = time.time()
 
+    # Extrage Z global din numele fișierului
+    global_z = extract_global_z_from_filename(dxf_path)
+    print(f"[DEBUG] Global Z level from filename: {global_z}")
+
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
 
@@ -1981,8 +2697,8 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
             ifc_converter = None
 
     # Citește cercurile de control pentru formele spațiale
-    control_points = read_control_circles(doc, layer="control")
-    print(f"[DEBUG] Control circles loaded: {len(control_points)}")
+    control_points = read_control_circles(doc, layer="control", global_z=global_z)
+    print(f"[DEBUG] Control circles loaded: {len(control_points)} with global_z={global_z}")
 
     solids = []
     voids = []
@@ -2013,15 +2729,29 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
         # Debug pentru toate entitățile, nu doar cele cu XDATA
         print(f"[DEBUG] Processing entity: {ent_type} handle={handle} layer={layer}")
 
-        # Procesare specială pentru blocurile de ferestre
-        if ent_type == "INSERT" and layer == "IfcWindow":
+        # Pentru blocurile INSERT, obține numele blocului
+        block_name = ""
+        if ent_type == "INSERT":
             block_name = getattr(e.dxf, "name", "")
+            print(f"[DEBUG] INSERT block name: {block_name}")
+
+        # IMPORTANT: Procesare Door/Window TOV TREBUIE să fie ÎNAINTE de IfcWindow metadata!
+        # Procesare pentru blocurile Door/Window TOV (cu logica FOV din biblioteci)
+        if ent_type == "INSERT" and DOOR_WINDOW_PROCESSOR_AVAILABLE and block_name.endswith('_TOV'):
+            if process_door_window_block(doc, e, global_z, mesh_name_count, mapping, solids, voids, control_points):
+                print(f"[DEBUG] Successfully processed Door/Window TOV: {block_name}")
+                continue  # Nu procesăm blocul ca geometrie normală sau window metadata
+            else:
+                print(f"[DEBUG] Failed to process Door/Window TOV: {block_name}, falling back to normal processing")
+
+        # Procesare specială pentru blocurile de ferestre (doar pentru metadata, NU pentru TOV!)
+        if ent_type == "INSERT" and layer == "IfcWindow" and not block_name.endswith('_TOV'):
             insert_point = getattr(e.dxf, "insert", None)
             rotation_angle = getattr(e.dxf, "rotation", 0.0)  # Rotația în grade
             
             if insert_point and block_name:
                 # Parsează XDATA pentru Z
-                z_position = 0.0
+                z_relative = 0.0  # Z relativ la global_z
                 window_height = 1.2  # Înălțime implicită pentru ferestre
                 window_name = block_name
                 
@@ -2042,7 +2772,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                                             sval = str(value)
                                             if sval.startswith("z:"):
                                                 try:
-                                                    z_position = float(sval.split(":")[1])
+                                                    z_relative = float(sval.split(":")[1])
                                                 except Exception:
                                                     pass
                                             elif sval.startswith("height:"):
@@ -2058,6 +2788,9 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                     except Exception as ex:
                         print(f"[DEBUG] XDATA parsing error for window block: {ex}")
                 
+                # Calculează Z final pentru fereastră
+                z_final = global_z + z_relative
+                
                 # Creează entry pentru mapping
                 window_uuid = str(uuid.uuid4())
                 window_entry = {
@@ -2071,8 +2804,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                     "position": {
                         "x": float(insert_point.x),
                         "y": float(insert_point.y), 
-                        "z": z_position
+                        "z": z_final  # Z final calculat (global_z + z_relative)
                     },
+                    "z_final": z_final,       # Z final calculat
+                    "z_relative": z_relative, # Z relativ din XDATA
+                    "global_z": global_z,     # Z global din numele fișierului
                     "rotation": {
                         "z": rotation_angle  # Rotația în jurul axei Z în grade
                     },
@@ -2085,7 +2821,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                 }
                 
                 mapping.append(window_entry)
-                print(f"[DEBUG] Added window block: {block_name} at ({insert_point.x:.2f}, {insert_point.y:.2f}, {z_position:.2f}) rotation={rotation_angle:.1f}°")
+                print(f"[DEBUG] Added window block: {block_name} at ({insert_point.x:.2f}, {insert_point.y:.2f}, {z_final:.2f}) global_z={global_z} + z_relative={z_relative} rotation={rotation_angle:.1f}°")
                 continue  # Nu procesăm blocul ca geometrie normală
 
         # Procesare pentru blocurile cu geometrie (INSERT cu conținut solid)
@@ -2108,7 +2844,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         process_block_geometry(
                             doc, block_layout, insert_point, rotation_angle, 
                             scale_x, scale_y, scale_z, layer, handle, 
-                            xdata, mesh_name_count, mapping, solids, voids, control_points
+                            xdata, mesh_name_count, mapping, solids, voids, control_points, global_z
                         )
                         continue  # Blocul a fost procesat, trecem la următoarea entitate
                     else:
@@ -2117,8 +2853,9 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                     print(f"[DEBUG] Error processing block {block_name}: {ex}")
                     # Continuă cu procesarea normală dacă blocul nu poate fi procesat
 
-        def parse_xdata_from_list(xdata_list):
-            height, z = 1.0, 0.0
+        def parse_xdata_from_list(xdata_list, global_z):
+            height = 1.0
+            z_relative = 0.0  # Z relativ la global_z
             name_str = ""
             solid_flag = 1  # Implicit solid, doar dacă e explicit setat pe 0 devine void
             angle = 0.0  # Unghiul de rotație în grade (implicit 0)
@@ -2136,7 +2873,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                             pass
                     elif sval.startswith("z:"):
                         try:
-                            z = float(sval.split(":")[1])
+                            z_relative = float(sval.split(":")[1])
                         except Exception:
                             pass
                     elif sval.startswith("Name:"):
@@ -2168,9 +2905,12 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                             pass
                     elif sval.startswith("Opening_area:"):
                         opening_area_formula = sval.split(":", 1)[1].strip()
-            return height, z, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula
+            
+            # Calculează Z final: global_z + z_relative
+            z_final = global_z + z_relative
+            return height, z_final, z_relative, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula
 
-        height, z, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula = parse_xdata_from_list(xdata.get("QCAD", []))
+        height, z_final, z_relative, name_str, solid_flag, angle, rotate90, rotate_x, rotate_y, opening_area_formula = parse_xdata_from_list(xdata.get("QCAD", []), global_z)
         rgba = get_material(layer)
         color, alpha = rgba[:3], rgba[3]
         mesh, mesh_uuid = None, str(uuid.uuid4())
@@ -2202,11 +2942,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         print(f"[DEBUG] Creeaza mesh 90° rotit cu normala fetei")
                         mesh = create_rotated_90_mesh(points, height)
                         if mesh is not None:
-                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
-                            z_position = z
+                            # Pentru coloane, z_final devine nivelul global
+                            z_position = z_final
                             if "IfcColumn" in layer:
-                                z_position = 0.0  # Coloanele încep de la sol
-                                print(f"[DEBUG] Coloana direct LWPOLYLINE rotate90 {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                                z_position = global_z  # Coloanele încep de la nivelul global
+                                print(f"[DEBUG] Coloana direct LWPOLYLINE rotate90 {mesh_name}: z_final={z_final:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
                             
                             mesh.apply_translation([0, 0, z_position])
                     elif abs(angle) > 1e-6:
@@ -2216,11 +2956,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         # Mesh orizontal standard cu translație Z
                         mesh = extrude_polygon(poly, height)
                         if mesh is not None:
-                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
-                            z_position = z
+                            # Pentru coloane, z_final devine nivelul global
+                            z_position = z_final
                             if "IfcColumn" in layer:
-                                z_position = 0.0  # Coloanele încep de la sol
-                                print(f"[DEBUG] Coloana direct LWPOLYLINE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                                z_position = global_z  # Coloanele încep de la nivelul global
+                                print(f"[DEBUG] Coloana direct LWPOLYLINE standard {mesh_name}: z_final={z_final:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
                             
                             mesh.apply_translation([0, 0, z_position])
                     
@@ -2245,11 +2985,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         print(f"[DEBUG] Creeaza mesh 90° rotit POLYLINE cu normala fetei")
                         mesh = create_rotated_90_mesh(points, height)
                         if mesh is not None:
-                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
-                            z_position = z
+                            # Pentru coloane, z_final devine nivelul global
+                            z_position = z_final
                             if "IfcColumn" in layer:
-                                z_position = 0.0  # Coloanele încep de la sol
-                                print(f"[DEBUG] Coloana direct POLYLINE rotate90 {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                                z_position = global_z  # Coloanele încep de la nivelul global
+                                print(f"[DEBUG] Coloana direct POLYLINE rotate90 {mesh_name}: z_final={z_final:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
                             
                             mesh.apply_translation([0, 0, z_position])
                     elif abs(angle) > 1e-6:
@@ -2259,11 +2999,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                         # Mesh orizontal standard cu translație Z
                         mesh = extrude_polygon(poly, height)
                         if mesh is not None:
-                            # Pentru coloane, z ar trebui să fie 0 (baza la sol)
-                            z_position = z
+                            # Pentru coloane, z_final devine nivelul global
+                            z_position = z_final
                             if "IfcColumn" in layer:
-                                z_position = 0.0  # Coloanele încep de la sol  
-                                print(f"[DEBUG] Coloana direct POLYLINE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                                z_position = global_z  # Coloanele încep de la nivelul global  
+                                print(f"[DEBUG] Coloana direct POLYLINE standard {mesh_name}: z_final={z_final:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
                             
                             mesh.apply_translation([0, 0, z_position])
                     
@@ -2298,11 +3038,11 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                     # Mesh orizontal standard cu translație Z
                     mesh = extrude_polygon(poly, height)
                     if mesh is not None:
-                        # Pentru coloane, z ar trebui să fie 0 (baza la sol)
-                        z_position = z
+                        # Pentru coloane, z_final devine nivelul global
+                        z_position = z_final
                         if "IfcColumn" in layer:
-                            z_position = 0.0  # Coloanele încep de la sol  
-                            print(f"[DEBUG] Coloana direct CIRCLE standard {mesh_name}: z={z:.3f} -> z_position=0.000 (baza la sol)")
+                            z_position = global_z  # Coloanele încep de la nivelul global  
+                            print(f"[DEBUG] Coloana direct CIRCLE standard {mesh_name}: z_final={z_final:.3f} -> z_position={global_z:.3f} (baza la nivel global)")
                         
                         mesh.apply_translation([0, 0, z_position])
                 
@@ -2360,7 +3100,7 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
             mesh.metadata["material_alpha"] = alpha
             mesh.metadata["material_rgba"] = rgba_float
 
-            print(f"[DEBUG] Export mesh: {mesh_name} | color={color} alpha={alpha} | vertex_colors.shape={mesh.visual.vertex_colors.shape if hasattr(mesh.visual, 'vertex_colors') else 'N/A'} | height={height} z={z}")
+            print(f"[DEBUG] Export mesh: {mesh_name} | color={color} alpha={alpha} | vertex_colors.shape={mesh.visual.vertex_colors.shape if hasattr(mesh.visual, 'vertex_colors') else 'N/A'} | height={height} z_final={z_final} (global_z={global_z} + z_relative={z_relative})")
 
             # Pentru IfcSpace, scade Opening_area din lateral_area dacă este specificată
             if layer == "IfcSpace" and opening_area_formula:
@@ -2379,6 +3119,9 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
                 "angle": angle,
                 "rotate_x": rotate_x,
                 "rotate_y": rotate_y,
+                "z_final": z_final,         # Z final calculat (global_z + z_relative)
+                "z_relative": z_relative,   # Z relativ din XDATA
+                "global_z": global_z,       # Z global din numele fișierului
                 "segment_lengths": segment_lengths,
                 "perimeter": perimeter,
                 "area": area,
@@ -2402,19 +3145,27 @@ def dxf_to_gltf(dxf_path, out_path, arc_segments=16):
     all_solids = []
     
     for mesh in solids + voids:
-        layer = mesh.metadata.get("layer", "default")
+        # Handle both direct mesh objects and mesh dictionaries (from TOV processing)
+        if isinstance(mesh, dict):
+            actual_mesh = mesh["mesh"]
+            layer = mesh.get("layer", "default")
+            is_void = not mesh.get("solid", True)  # solid=False means it's a void
+        else:
+            actual_mesh = mesh
+            layer = mesh.metadata.get("layer", "default")
+            is_void = mesh.metadata.get("is_void", False)
         
-        if mesh.metadata.get("is_void", False):
+        if is_void:
             if layer == "void":
                 # Layerul "void" taie toate geometriile
-                global_voids.append(mesh)
+                global_voids.append(actual_mesh)
             else:
                 # Voiduri pe alte layere (solid_flag=0) taie doar același layer
                 if layer not in layer_voids_by_layer:
                     layer_voids_by_layer[layer] = []
-                layer_voids_by_layer[layer].append(mesh)
+                layer_voids_by_layer[layer].append(actual_mesh)
         else:
-            all_solids.append(mesh)
+            all_solids.append(actual_mesh)
 
     print(f"[DEBUG] Global voids (layer 'void'): {len(global_voids)}")
     print(f"[DEBUG] Layer-specific voids: {sum(len(v) for v in layer_voids_by_layer.values())}")
