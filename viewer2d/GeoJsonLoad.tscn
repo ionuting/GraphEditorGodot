@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3 uid="uid://x8y5rcj178ov"]
+
+[ext_resource type="Script" uid="uid://bj5oiancfrhma" path="res://geojson.gd" id="1_b3ujr"]
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_b3ujr")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.20862, -8.53366)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="Camera3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.20862, 36.3385)

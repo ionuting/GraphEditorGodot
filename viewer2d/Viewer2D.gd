@@ -85,6 +85,9 @@ func _setup_file_menu():
 		popup.add_item("Open", 0)
 		popup.add_item("Save", 1)
 		popup.add_item("Save As", 2)
+		popup.add_separator()
+		popup.add_item("Generate Layout Sheets", 3)
+		popup.add_item("Open Layout Designer", 4)
 		popup.id_pressed.connect(Callable(self, "_on_file_menu_pressed"))
 
 # Utility: caută recursiv un nod după nume
@@ -105,6 +108,10 @@ func _on_file_menu_pressed(id):
 			save_project_json()
 		2:
 			_show_save_as_dialog()
+		3:
+			_generate_layout_sheets()
+		4:
+			_open_layout_designer()
 
 func _show_open_dialog():
 	var dialog = FileDialog.new()
@@ -132,6 +139,43 @@ func _show_save_as_dialog():
 
 func _on_save_as_file_selected(path):
 	save_project_json(path)
+
+func _generate_layout_sheets():
+	print("[DEBUG] Generating layout sheets...")
+	
+	# Salvează proiectul curent
+	save_project_json()
+	
+	# Verifică dacă avem shapes pentru a genera planșe
+	if _imported_shapes.is_empty():
+		push_error("No shapes to generate layouts. Please add some shapes first.")
+		return
+	
+	# Rulează convertorul Python
+	var output = []
+	var project_dir = ProjectSettings.globalize_path("res://")
+	var temp_json_path = project_dir + "temp_project.json"
+	var converter_script = project_dir + "python/godot_to_layout.py"
+	var layout_script = project_dir + "python/layout_generator.py"
+	
+	print("[DEBUG] Project dir: ", project_dir)
+	print("[DEBUG] Temp JSON: ", temp_json_path)
+	
+	# Execută convertorul Godot -> GLB
+	print("[DEBUG] Running Godot to Layout converter...")
+	OS.execute("python", [converter_script, temp_json_path, "viewer2d_export"], output)
+	
+	# Execută generatorul de planșe
+	print("[DEBUG] Running Layout Generator...")
+	OS.execute("python", [layout_script, "viewer2d_export"], output)
+	
+	print("[DEBUG] Layout generation completed!")
+	print("[DEBUG] Check for generated SVG files in project directory")
+
+func _open_layout_designer():
+	"""Deschide Layout Designer într-o fereastră nouă"""
+	print("[DEBUG] Opening Layout Designer...")
+	get_tree().change_scene_to_file("res://LayoutTest.tscn")
 
 func _on_shape_placement_finalized(tool: Dictionary, center: Vector2, size: Vector2):
 	print("[DEBUG] shape_placement_finalized: tool=", tool, " center=", center, " size=", size)

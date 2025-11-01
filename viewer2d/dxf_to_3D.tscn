@@ -6,7 +6,7 @@
 [node name="Node3D" type="Node3D"]
 script = ExtResource("1_n7kv7")
 grid_color = Color(0.0104254, 0.052579, 0.0561186, 0.3)
-background_color = Color(0, 0, 0, 1)
+background_color = Color(0.925353, 0.925353, 0.925353, 1)
 
 [node name="Camera3D" type="Camera3D" parent="."]
 
@@ -32,6 +32,13 @@ offset_top = 2.0
 offset_right = 420.0
 offset_bottom = 33.0
 text = "Export IFC Spaces"
+
+[node name="ExportMultiIfcBtn" type="Button" parent="CanvasLayer"]
+offset_left = 425.0
+offset_top = 2.0
+offset_right = 580.0
+offset_bottom = 33.0
+text = "Export Multi-Level IFC"
 
 [node name="Panel" type="Panel" parent="CanvasLayer"]
 anchors_preset = -1

@@ -105,13 +105,15 @@ func _ready():
 	# Adaugă o lumină direcțională pentru evidențierea voidurilor
 	var dir_light = DirectionalLight3D.new()
 	dir_light.light_color = Color(1, 1, 0.95)
-
 	dir_light.shadow_enabled = true
 	dir_light.shadow_bias = 0.05
-
-	dir_light.transform.origin = Vector3(0, 10, 10)
+	
+	# Poziționează lumina sus (Z mare) și orientează-o în jos spre scena
+	# În sistemul nostru: X = est-vest, Y = nord-sud, Z = verticală
+	dir_light.transform.origin = Vector3(50, 50, 100)  # Lumina sus și diagonal
+	dir_light.rotation_degrees = Vector3(-45, -45, 0)  # Orientare diagonală în jos
 	add_child(dir_light)
-	print("[DEBUG] DirectionalLight3D added")
+	print("[DEBUG] DirectionalLight3D added at position:", dir_light.transform.origin)
 	if canvas == null:
 		var cl = CanvasLayer.new()
 		add_child(cl)
@@ -165,6 +167,11 @@ func _ready():
 	var export_ifc_btn = $CanvasLayer/ExportIfcBtn if has_node("CanvasLayer/ExportIfcBtn") else null
 	if export_ifc_btn:
 		export_ifc_btn.pressed.connect(_on_export_ifc_btn_pressed)
+	
+	# Integrare Export Multi-Level IFC Button
+	var export_multi_ifc_btn = $CanvasLayer/ExportMultiIfcBtn if has_node("CanvasLayer/ExportMultiIfcBtn") else null
+	if export_multi_ifc_btn:
+		export_multi_ifc_btn.pressed.connect(_on_export_multi_ifc_btn_pressed)
 
 	print("[DEBUG] 🔥🔥🔥 READY TO MOVE TO UI INTEGRATION SECTION 🔥🔥🔥")
 	print("[DEBUG] *** STEP 9: Moving to UI integration section ***")
@@ -336,6 +343,7 @@ func _on_dxf_folder_selected(dir_path):
 	if dir:
 		var dxf_count = 0
 		var glb_count = 0
+		var diagram_count = 0
 		dir.list_dir_begin()
 		var file_name = dir.get_next()
 		while file_name != "":
@@ -343,9 +351,11 @@ func _on_dxf_folder_selected(dir_path):
 				dxf_count += 1
 			elif file_name.to_lower().ends_with(".glb"):
 				glb_count += 1
+			elif file_name.to_lower() == "diagram.xml":
+				diagram_count += 1
 			file_name = dir.get_next()
 		dir.list_dir_end()
-		print("[DEBUG] Found in folder - DXF files:", dxf_count, " GLB files:", glb_count)
+		print("[DEBUG] Found in folder - DXF:", dxf_count, " GLB:", glb_count, " Diagram.xml:", diagram_count)
 	
 	_process_dxf_folder(dir_path)
 
@@ -415,6 +425,7 @@ func _process_dxf_folder(dir_path: String):
 	var file_name = dir.get_next()
 	var glb_paths = []
 	var dxf_files_found = []
+	var diagram_files_found = []
 	
 	while file_name != "":
 		if not dir.current_is_dir():
@@ -423,26 +434,65 @@ func _process_dxf_folder(dir_path: String):
 				dxf_files_found.append(file_name)
 				var dxf_path = dir_path + "/" + file_name
 				var glb_path = dir_path + "/" + file_name.get_basename() + ".glb"
-				print("[DEBUG] Will convert:", dxf_path, " -> ", glb_path)
+				print("[DEBUG] Will convert DXF:", dxf_path, " -> ", glb_path)
+			elif file_name.to_lower() == "diagram.xml":
+				diagram_files_found.append(file_name)
+				var xml_path = dir_path + "/" + file_name
+				var glb_path = dir_path + "/model.glb"  # Standard name for diagram models
+				print("[DEBUG] Will convert Diagram.xml:", xml_path, " -> ", glb_path)
 		file_name = dir.get_next()
 	dir.list_dir_end()
 	
 	print("[DEBUG] Found", dxf_files_found.size(), "DXF files:", dxf_files_found)
+	print("[DEBUG] Found", diagram_files_found.size(), "Diagram.xml files:", diagram_files_found)
 	
 	# Procesează fiecare fișier DXF
 	for dxf_file in dxf_files_found:
 		var dxf_path = dir_path + "/" + dxf_file
 		var glb_path = dir_path + "/" + dxf_file.get_basename() + ".glb"
 		
-		print("[DEBUG] Converting:", dxf_path, "->", glb_path)
+		print("[DEBUG] Converting DXF:", dxf_path, "->", glb_path)
 		var exit_code = _run_python_dxf_to_glb(dxf_path, glb_path)
-		print("[DEBUG] Conversion exit code:", exit_code)
+		print("[DEBUG] DXF Conversion exit code:", exit_code)
 		
 		if FileAccess.file_exists(glb_path):
 			print("[DEBUG] GLB file created successfully:", glb_path)
 			glb_paths.append(glb_path)
 		else:
 			print("[ERROR] GLB file not created:", glb_path)
+	
+	# Procesează fiecare fișier Diagram.xml
+	for diagram_file in diagram_files_found:
+		var xml_path = dir_path + "/" + diagram_file
+		var glb_path = dir_path + "/model.glb"
+		var obj_path = dir_path + "/model.obj"
+		
+		# Verifică dacă există deja GLB generat
+		if FileAccess.file_exists(glb_path):
+			print("[DEBUG] Found existing GLB from Diagram.xml:", glb_path)
+			# Verifică dacă XML-ul e mai recent decât GLB-ul (re-generare necesară)
+			var xml_time = FileAccess.get_modified_time(xml_path)
+			var glb_time = FileAccess.get_modified_time(glb_path)
+			
+			if xml_time > glb_time:
+				print("[DEBUG] Diagram.xml is newer, re-converting...")
+				var exit_code = _run_python_diagram_to_glb(xml_path, glb_path, obj_path)
+				print("[DEBUG] Diagram re-conversion exit code:", exit_code)
+			else:
+				print("[DEBUG] Using existing GLB (up-to-date)")
+			
+			glb_paths.append(glb_path)
+		else:
+			# Generează GLB din Diagram.xml
+			print("[DEBUG] Converting Diagram.xml:", xml_path, "->", glb_path)
+			var exit_code = _run_python_diagram_to_glb(xml_path, glb_path, obj_path)
+			print("[DEBUG] Diagram conversion exit code:", exit_code)
+			
+			if FileAccess.file_exists(glb_path):
+				print("[DEBUG] GLB file created successfully from Diagram.xml:", glb_path)
+				glb_paths.append(glb_path)
+			else:
+				print("[ERROR] GLB file not created from Diagram.xml:", glb_path)
 	
 	print("[DEBUG] Total GLB files to load:", glb_paths.size())
 	if glb_paths.size() > 0:
@@ -459,6 +509,55 @@ func _run_python_dxf_to_glb(dxf_path: String, glb_path: String):
 	var exit_code = OS.execute("python", args, output, true)
 	print("[PYTHON OUTPUT]", output)
 	print("[PYTHON EXIT CODE]", exit_code)
+	return exit_code
+
+
+func _run_python_diagram_to_glb(xml_path: String, glb_path: String, obj_path: String):
+	"""Convert Diagram.xml to GLB using graph_to_glb.py"""
+	var script_path = "python/graph_to_glb.py"
+	
+	# Create a temporary Python script that calls export_to_glb with the right paths
+	var temp_script = """
+import sys
+sys.path.insert(0, 'python')
+from graph_to_glb import export_to_glb
+
+xml_path = sys.argv[1]
+glb_path = sys.argv[2]
+obj_path = sys.argv[3]
+
+try:
+	export_to_glb(xml_path, glb_path, obj_path)
+	print('[SUCCESS] Diagram.xml converted to GLB')
+except Exception as e:
+	print('[ERROR] Conversion failed:', e)
+	import traceback
+	traceback.print_exc()
+	sys.exit(1)
+"""
+	
+	# Write temp script
+	var temp_script_path = "python/temp_convert_diagram.py"
+	var file = FileAccess.open(temp_script_path, FileAccess.WRITE)
+	if file:
+		file.store_string(temp_script)
+		file.close()
+	else:
+		print("[ERROR] Could not create temp script")
+		return 1
+	
+	# Run the conversion
+	var args = [temp_script_path, xml_path, glb_path, obj_path]
+	var output = []
+	print("[DEBUG] Running Python diagram converter: python ", args)
+	var exit_code = OS.execute("python", args, output, true)
+	print("[PYTHON OUTPUT]", output)
+	print("[PYTHON EXIT CODE]", exit_code)
+	
+	# Clean up temp script
+	if FileAccess.file_exists(temp_script_path):
+		DirAccess.remove_absolute(temp_script_path)
+	
 	return exit_code
 
 
@@ -1384,7 +1483,133 @@ func _setup_ui_buttons():
 	right_panel.add_child(fit_all_btn)
 	print("[UI_DEBUG] Added FIT ALL button at position:", fit_all_btn.position)
 	
+	# Buton pentru încărcare GeoJSON
+	var geojson_btn = Button.new()
+	geojson_btn.text = "LOAD GEOJSON"
+	geojson_btn.position = Vector2(5, 5 + (len(names)+1)*25)  # Sub FIT ALL
+	geojson_btn.size = Vector2(110, 22)
+	geojson_btn.modulate = Color(0.7, 0.5, 0.1)
+	geojson_btn.add_theme_color_override("font_color", Color.WHITE)
+	geojson_btn.pressed.connect(Callable(self, "_on_load_geojson_btn_pressed"))
+	right_panel.add_child(geojson_btn)
+	print("[UI_DEBUG] Added LOAD GEOJSON button at position:", geojson_btn.position)
+
+	# Dialog de fișier pentru GeoJSON (dacă nu există deja)
+	if not canvas.has_node("GeoJsonFileDialog"):
+		var geojson_dialog = FileDialog.new()
+		geojson_dialog.name = "GeoJsonFileDialog"
+		geojson_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		geojson_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		geojson_dialog.filters = PackedStringArray(["*.geojson ; GeoJSON Files"])
+		geojson_dialog.title = "Select GeoJSON file"
+		geojson_dialog.size = Vector2(600, 400)
+		geojson_dialog.file_selected.connect(Callable(self, "_on_geojson_file_selected"))
+		canvas.add_child(geojson_dialog)
+		print("[UI_DEBUG] Added GeoJsonFileDialog to canvas")
+	
+	# Buton pentru încărcare CityJSON
+	var cityjson_btn = Button.new()
+	cityjson_btn.text = "LOAD CITYJSON"
+	cityjson_btn.position = Vector2(5, 5 + (len(names)+2)*25)  # Sub LOAD GEOJSON
+	cityjson_btn.size = Vector2(110, 22)
+	cityjson_btn.modulate = Color(0.1, 0.7, 0.5)  # Verde-albastru pentru diferențiere
+	cityjson_btn.add_theme_color_override("font_color", Color.WHITE)
+	cityjson_btn.pressed.connect(Callable(self, "_on_load_cityjson_btn_pressed"))
+	right_panel.add_child(cityjson_btn)
+	print("[UI_DEBUG] Added LOAD CITYJSON button at position:", cityjson_btn.position)
+	
+	# Dialog de fișier pentru CityJSON
+	if not canvas.has_node("CityJsonFileDialog"):
+		var cityjson_dialog = FileDialog.new()
+		cityjson_dialog.name = "CityJsonFileDialog"
+		cityjson_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		cityjson_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		cityjson_dialog.filters = PackedStringArray(["*.jsonl ; CityJSON Files", "*.json ; CityJSON Files"])
+		cityjson_dialog.title = "Select CityJSON file"
+		cityjson_dialog.size = Vector2(600, 400)
+		cityjson_dialog.file_selected.connect(Callable(self, "_on_cityjson_file_selected"))
+		canvas.add_child(cityjson_dialog)
+		print("[UI_DEBUG] Added CityJsonFileDialog to canvas")
+	
+	# Buton pentru încărcare 3D Tiles (Cesium)
+	var tiles3d_btn = Button.new()
+	tiles3d_btn.text = "LOAD 3D TILES"
+	tiles3d_btn.position = Vector2(5, 5 + (len(names)+3)*25)  # Sub LOAD CITYJSON
+	tiles3d_btn.size = Vector2(110, 22)
+	tiles3d_btn.modulate = Color(0.5, 0.2, 0.8)  # Violet pentru Cesium
+	tiles3d_btn.add_theme_color_override("font_color", Color.WHITE)
+	tiles3d_btn.pressed.connect(Callable(self, "_on_load_3dtiles_btn_pressed"))
+	right_panel.add_child(tiles3d_btn)
+	print("[UI_DEBUG] Added LOAD 3D TILES button at position:", tiles3d_btn.position)
+	
+	# Dialog de fișier pentru 3D Tiles (tileset.json)
+	if not canvas.has_node("Tiles3DFileDialog"):
+		var tiles3d_dialog = FileDialog.new()
+		tiles3d_dialog.name = "Tiles3DFileDialog"
+		tiles3d_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		tiles3d_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		tiles3d_dialog.filters = PackedStringArray(["tileset.json ; Cesium 3D Tiles", "*.json ; Tileset JSON"])
+		tiles3d_dialog.title = "Select Cesium 3D Tiles tileset.json"
+		tiles3d_dialog.size = Vector2(600, 400)
+		tiles3d_dialog.file_selected.connect(Callable(self, "_on_3dtiles_file_selected"))
+		canvas.add_child(tiles3d_dialog)
+		print("[UI_DEBUG] Added Tiles3DFileDialog to canvas")
+
 	print("[UI_DEBUG] UI buttons setup complete - all buttons added to right panel")
+
+# Callback pentru butonul de încărcare GeoJSON
+func _on_load_geojson_btn_pressed():
+	var geojson_dialog = canvas.get_node_or_null("GeoJsonFileDialog")
+	if geojson_dialog:
+		geojson_dialog.popup_centered()
+	else:
+		push_error("GeoJsonFileDialog not found!")
+
+# Callback pentru selecția fișierului GeoJSON
+func _on_geojson_file_selected(path: String):
+	# Poți ajusta valorile pentru scale_factor, extrusion_height, center_lat/lon după caz
+	# extrusion_height = 15.0m înălțime default pentru clădiri
+	load_geojson(path, 100000.0, 15.0, 46.6720031, 28.0620905)
+	print("[UI_DEBUG] Loaded GeoJSON file:", path)
+
+# === CITYJSON CALLBACKS ===
+func _on_load_cityjson_btn_pressed():
+	var cityjson_dialog = canvas.get_node_or_null("CityJsonFileDialog")
+	if cityjson_dialog:
+		cityjson_dialog.popup_centered()
+	else:
+		push_error("CityJsonFileDialog not found!")
+
+func _on_cityjson_file_selected(path: String):
+	print("[CityJSON] Loading file: ", path)
+	# LoD 2.2 oferă cel mai mult detaliu (ferestre, decorații)
+	# LoD 1.2/1.3 pentru performanță mai bună
+	load_cityjson(path, "2.2")
+	print("[CityJSON] File loaded:", path)
+
+# === CESIUM 3D TILES CALLBACKS ===
+func _on_load_3dtiles_btn_pressed():
+	var tiles3d_dialog = canvas.get_node_or_null("Tiles3DFileDialog")
+	if tiles3d_dialog:
+		tiles3d_dialog.popup_centered()
+	else:
+		push_error("Tiles3DFileDialog not found!")
+
+func _on_3dtiles_file_selected(path: String):
+	print("[3D Tiles] Loading tileset: ", path)
+	
+	# Addon-ul Cesium pentru Godot este orientat spre editor, nu runtime
+	# Folosim implementarea noastră manuală pentru încărcarea la runtime
+	# 
+	# Pentru a folosi addon-ul Cesium în editor:
+	# 1. Activează plugin-ul din Project Settings > Plugins > Cesium for Godot
+	# 2. Adaugă nodurile CesiumGeoreference și Cesium3DTileset din panelul Cesium
+	# 3. Configurează URL-ul tileset-ului în Inspector
+	# 4. Tileset-ul va fi vizibil în editor și la runtime
+	
+	# Pentru încărcare dinamică la runtime, folosim implementarea noastră:
+	load_3d_tiles(path)
+	print("[3D Tiles] Tileset loaded:", path)
 
 func _setup_coordinate_label():
 	coord_label = Label.new()
@@ -2775,6 +3000,66 @@ func _show_export_message(message: String, success: bool):
 	tween.tween_callback(panel.queue_free.bind())
 	tween.tween_callback(message_label.queue_free.bind())
 
+# === MULTI-LEVEL IFC EXPORT ===
+func _on_export_multi_ifc_btn_pressed():
+	"""Exportă toate fișierele DXF încărcate ca multi-level building în IFC"""
+	print("[DEBUG] Starting Multi-Level IFC export...")
+	
+	# Verifică dacă avem proiecte importate
+	if imported_projects.is_empty():
+		print("[WARNING] No DXF projects loaded")
+		_show_export_message("No DXF projects loaded. Import some DXF files first.", false)
+		return
+	
+	# Creează folder pentru export dacă nu există
+	var export_dir = "exported_ifc"
+	if not DirAccess.dir_exists_absolute(export_dir):
+		DirAccess.open(".").make_dir(export_dir)
+	
+	# Generează nume fișier cu timestamp
+	var timestamp = Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
+	var building_name = "multi_level_building_" + timestamp
+	var ifc_output_path = export_dir + "/" + building_name + ".ifc"
+	
+	# Colectează toate fișierele DXF importate
+	var dxf_files = []
+	for project_name in imported_projects.keys():
+		if project_name.ends_with(".dxf"):
+			dxf_files.append(project_name)
+	
+	if dxf_files.is_empty():
+		print("[WARNING] No DXF files found in imported projects")
+		_show_export_message("No DXF files found. Only DXF files can be exported to multi-level IFC.", false)
+		return
+	
+	# Rulează exportul Python Multi-Level IFC
+	var success = _run_python_multi_ifc_export(dxf_files, ifc_output_path)
+	
+	if success:
+		print("[SUCCESS] Multi-Level IFC export completed: ", ifc_output_path)
+		_show_export_message("Multi-Level IFC export completed successfully!\nFile: " + ifc_output_path + "\nLevels: " + str(dxf_files.size()), true)
+	else:
+		print("[ERROR] Multi-Level IFC export failed")
+		_show_export_message("Multi-Level IFC export failed. Check console for details.", false)
+
+func _run_python_multi_ifc_export(dxf_files: Array, ifc_output_path: String) -> bool:
+	"""Rulează script-ul Python pentru exportul Multi-Level IFC"""
+	var script_path = "python/ifc_integration.py"
+	
+	var args = [script_path, ifc_output_path]
+	for dxf_file in dxf_files:
+		args.append(dxf_file)
+	
+	var output = []
+	
+	print("[DEBUG] Running Python Multi-Level IFC export: python ", args)
+	var exit_code = OS.execute("python", args, output, true)
+	
+	print("[PYTHON MULTI IFC OUTPUT] ", output)
+	print("[PYTHON MULTI IFC EXIT CODE] ", exit_code)
+	
+	return exit_code == 0
+
 # === CUT SHADER INTEGRATION METHODS ===
 
 func _setup_cut_shader_integration():
@@ -2796,8 +3081,8 @@ func _setup_cut_shader_integration():
 	# Inițializează materialul pentru secțiuni
 	_init_section_material()
 	
-	# Setup section controls în UI
-	_setup_section_controls()
+	# Setup section controls în UI - DISABLED (UI removal while keeping backend)
+	# _setup_section_controls()
 	
 	print("[CutShader] Cut shader integration setup complete")
 
@@ -3028,3 +3313,1478 @@ func _exit_tree():
 	if watchdog_process > 0:
 		OS.kill(watchdog_process)
 		print("[DEBUG] Stopped DXF watchdog process")
+
+# === GEOJSON INTEGRATION ===
+# Integrează suport pentru încărcare și afișare GeoJSON, cu centrare automată și vedere de sus
+func load_geojson(file_path: String, scale_factor: float = 100000.0, extrusion_height: float = 15.0, center_lat: float = 0.0, center_lon: float = 0.0):
+	var buildings := []
+	var all_points := []
+	if not FileAccess.file_exists(file_path):
+		push_error("GeoJSON file does not exist: " + file_path)
+		return
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if file == null:
+		push_error("Cannot open GeoJSON file: " + file_path)
+		return
+	var json_text = file.get_as_text()
+	file.close()
+	var json = JSON.new()
+	var error = json.parse(json_text)
+	if error != OK:
+		push_error("GeoJSON parse error: " + json.get_error_message())
+		return
+	var data = json.data
+	if not data.has("features"):
+		push_error("GeoJSON has no features array!")
+		return
+	
+	print("[GeoJSON] Loading ", data.features.size(), " features...")
+	var feature_count = 0
+	var skipped_count = 0
+	
+	for feature in data.features:
+		if not feature.has("geometry"):
+			continue
+		var geometry = feature.geometry
+		var properties = feature.get("properties", {})
+		var geom_type = geometry.get("type", "")
+		
+		# Filtrare: Skip puncte simple care nu sunt importante (ex: stâlpi de electricitate)
+		if geom_type == "Point":
+			# Păstrează doar puncte importante (clădiri, POI-uri importante)
+			if not properties.has("amenity") and not properties.has("place") and not properties.has("tourism"):
+				skipped_count += 1
+				continue  # Skip power towers și alte puncte nesemnificative
+		
+		match geom_type:
+			"Polygon":
+				_geojson_create_polygon(geometry.coordinates, properties, scale_factor, extrusion_height, center_lat, center_lon, buildings, all_points)
+			"MultiPolygon":
+				for polygon in geometry.coordinates:
+					_geojson_create_polygon(polygon, properties, scale_factor, extrusion_height, center_lat, center_lon, buildings, all_points)
+			"LineString":
+				# Filtrare opțională: doar drumuri importante
+				if properties.has("highway"):
+					_geojson_create_linestring(geometry.coordinates, properties, scale_factor, center_lat, center_lon, all_points)
+			"Point":
+				_geojson_create_point(geometry.coordinates, properties, scale_factor, center_lat, center_lon, all_points)
+		
+		feature_count += 1
+		# Afișează progres la fiecare 100 de features
+		if feature_count % 100 == 0:
+			print("[GeoJSON] Processed ", feature_count, "/", data.features.size(), " features...")
+			await get_tree().process_frame  # Permite UI-ului să răspundă
+	
+	print("[GeoJSON] Loaded ", feature_count, " features (skipped ", skipped_count, " insignificant points)")
+	# Centrează camera pe centrul geometric
+	if all_points.size() > 0:
+		var bbox := AABB(all_points[0], Vector3.ZERO)
+		for pt in all_points:
+			bbox = bbox.expand(pt)
+		var center = bbox.position + bbox.size * 0.5
+		_fit_camera_to_bbox(bbox)
+		_set_top_view()
+		# Camera deasupra centrului (Z = verticală în sistemul nostru)
+		camera.global_position = Vector3(center.x, center.y, camera.global_position.z)
+		camera.look_at(center, Vector3.UP)
+	print("GeoJSON loaded: ", buildings.size(), " buildings/objects created.")
+
+# Helpers pentru meshuri GeoJSON
+func _geojson_create_polygon(coordinates: Array, properties: Dictionary, scale_factor: float, extrusion_height: float, center_lat: float, center_lon: float, buildings: Array, all_points: Array):
+	if coordinates.is_empty():
+		return
+	var outer_ring = coordinates[0]
+	if outer_ring.size() < 3:
+		return
+	var points = []
+	for coord in outer_ring:
+		var lon = coord[0]
+		var lat = coord[1]
+		var pos = _geojson_latlon_to_local(lat, lon, scale_factor, center_lat, center_lon)
+		points.append(pos)
+		all_points.append(pos)
+	
+	# Verifică dacă ultimul punct este identic cu primul (poligon închis) și elimină duplicatul
+	if points.size() > 0 and points[0].distance_to(points[points.size() - 1]) < 0.001:
+		points.remove_at(points.size() - 1)
+	
+	if points.size() < 3:
+		return
+	
+	var mesh_instance = MeshInstance3D.new()
+	var array_mesh = ArrayMesh.new()
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	var vertices = PackedVector3Array()
+	var indices = PackedInt32Array()
+	var normals = PackedVector3Array()
+	
+	var is_building = properties.has("building") and properties.building != "no"
+	var height = extrusion_height
+	if is_building:
+		if properties.has("height"):
+			height = float(properties.get("height", extrusion_height))
+		elif properties.has("building:levels"):
+			height = float(properties.get("building:levels", 1)) * 3.0
+		
+		# Creează baza (jos) cu triangulație corectă
+		var base_indices = _triangulate_polygon_2d(points)
+		var base_start = vertices.size()
+		for point in points:
+			vertices.append(point)
+			normals.append(Vector3(0, 0, -1))  # Normală în jos pentru bază
+		for idx in base_indices:
+			indices.append(base_start + idx)
+		
+		# Creează pereții laterali
+		var wall_start = vertices.size()
+		for i in range(points.size()):
+			var p1 = points[i]
+			var p2 = points[(i + 1) % points.size()]
+			
+			# Calculează normala pentru perete (perpendiculară pe segmentul p1-p2)
+			var edge = p2 - p1
+			var wall_normal = Vector3(-edge.y, edge.x, 0).normalized()
+			
+			var idx = vertices.size()
+			vertices.append(p1)
+			normals.append(wall_normal)
+			vertices.append(p2)
+			normals.append(wall_normal)
+			vertices.append(p2 + Vector3(0, 0, height))
+			normals.append(wall_normal)
+			vertices.append(p1 + Vector3(0, 0, height))
+			normals.append(wall_normal)
+			
+			# Două triunghiuri pentru perete
+			indices.append(idx)
+			indices.append(idx + 1)
+			indices.append(idx + 2)
+			indices.append(idx)
+			indices.append(idx + 2)
+			indices.append(idx + 3)
+		
+		# Creează acoperișul (sus) cu triangulație corectă
+		var roof_points = []
+		for point in points:
+			roof_points.append(point + Vector3(0, 0, height))
+		var roof_indices = _triangulate_polygon_2d(points)  # Aceeași triangulație
+		var roof_start = vertices.size()
+		for point in roof_points:
+			vertices.append(point)
+			normals.append(Vector3(0, 0, 1))  # Normală în sus pentru acoperiș
+		# Inversăm ordinea pentru ca fața să fie corectă (în sus)
+		for i in range(roof_indices.size() - 1, -1, -1):
+			indices.append(roof_start + roof_indices[i])
+	else:
+		# Pentru non-clădiri (parcuri, terenuri), doar o suprafață plană
+		var flat_indices = _triangulate_polygon_2d(points)
+		var flat_start = vertices.size()
+		for point in points:
+			vertices.append(point)
+			normals.append(Vector3(0, 0, 1))
+		for idx in flat_indices:
+			indices.append(flat_start + idx)
+	
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh_instance.mesh = array_mesh
+	var material = StandardMaterial3D.new()
+	# Activează fața dublă și dezactivează culling pentru vizibilitate din toate unghiurile
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if is_building:
+		material.albedo_color = Color(0.8, 0.7, 0.6, 1.0)
+	elif properties.has("landuse"):
+		material.albedo_color = Color(0.4, 0.7, 0.3, 0.7)
+	elif properties.has("leisure"):
+		material.albedo_color = Color(0.3, 0.8, 0.4, 0.8)
+	else:
+		material.albedo_color = Color(0.7, 0.7, 0.7, 0.5)
+	mesh_instance.set_surface_override_material(0, material)
+	add_child(mesh_instance)
+	buildings.append(mesh_instance)
+
+# Triangulație Ear Clipping pentru poligoane 2D (concave sau convexe)
+func _triangulate_polygon_2d(points_3d: Array) -> PackedInt32Array:
+	var indices = PackedInt32Array()
+	if points_3d.size() < 3:
+		return indices
+	
+	# Convertim la 2D (ignorăm Z)
+	var points_2d = []
+	for p in points_3d:
+		points_2d.append(Vector2(p.x, p.y))
+	
+	# Lista de indici rămași
+	var remaining = []
+	for i in range(points_2d.size()):
+		remaining.append(i)
+	
+	# Ear Clipping Algorithm
+	var max_iterations = points_2d.size() * 3  # Prevenire buclă infinită
+	var iteration = 0
+	while remaining.size() > 3 and iteration < max_iterations:
+		iteration += 1
+		var ear_found = false
+		
+		for i in range(remaining.size()):
+			var prev_idx = remaining[(i - 1 + remaining.size()) % remaining.size()]
+			var curr_idx = remaining[i]
+			var next_idx = remaining[(i + 1) % remaining.size()]
+			
+			var p_prev = points_2d[prev_idx]
+			var p_curr = points_2d[curr_idx]
+			var p_next = points_2d[next_idx]
+			
+			# Verifică dacă este un vertex convex
+			if not _is_convex_vertex(p_prev, p_curr, p_next):
+				continue
+			
+			# Verifică dacă nu există alte puncte în interiorul triunghiului
+			var is_ear = true
+			for j in range(remaining.size()):
+				if j == i or j == (i - 1 + remaining.size()) % remaining.size() or j == (i + 1) % remaining.size():
+					continue
+				var p_test = points_2d[remaining[j]]
+				if _point_in_triangle_2d(p_test, p_prev, p_curr, p_next):
+					is_ear = false
+					break
+			
+			if is_ear:
+				# Adaugă triunghiul
+				indices.append(prev_idx)
+				indices.append(curr_idx)
+				indices.append(next_idx)
+				
+				# Elimină vertex-ul curent
+				remaining.remove_at(i)
+				ear_found = true
+				break
+		
+		if not ear_found:
+			# Fallback: dacă nu găsim o ureche, ieșim pentru a evita bucla infinită
+			break
+	
+	# Adaugă ultimul triunghi
+	if remaining.size() == 3:
+		indices.append(remaining[0])
+		indices.append(remaining[1])
+		indices.append(remaining[2])
+	
+	return indices
+
+# Verifică dacă un vertex este convex (produs încrucișat pozitiv)
+func _is_convex_vertex(p_prev: Vector2, p_curr: Vector2, p_next: Vector2) -> bool:
+	var cross = (p_curr.x - p_prev.x) * (p_next.y - p_curr.y) - (p_curr.y - p_prev.y) * (p_next.x - p_curr.x)
+	return cross > 0
+
+# Verifică dacă un punct este în interiorul unui triunghi 2D
+func _point_in_triangle_2d(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> bool:
+	var v0 = c - a
+	var v1 = b - a
+	var v2 = p - a
+	
+	var dot00 = v0.dot(v0)
+	var dot01 = v0.dot(v1)
+	var dot02 = v0.dot(v2)
+	var dot11 = v1.dot(v1)
+	var dot12 = v1.dot(v2)
+	
+	var inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01)
+	var u = (dot11 * dot02 - dot01 * dot12) * inv_denom
+	var v = (dot00 * dot12 - dot01 * dot02) * inv_denom
+	
+	return (u >= 0) and (v >= 0) and (u + v < 1)
+
+func _geojson_create_linestring(coordinates: Array, properties: Dictionary, scale_factor: float, center_lat: float, center_lon: float, all_points: Array):
+	# Convertește coordonatele în puncte 3D
+	var points = []
+	for coord in coordinates:
+		var lon = coord[0]
+		var lat = coord[1]
+		var pos = _geojson_latlon_to_local(lat, lon, scale_factor, center_lat, center_lon)
+		points.append(pos)
+		all_points.append(pos)
+	
+	if points.size() < 2:
+		return
+	
+	# Determină lățimea drumului
+	var road_width = _get_road_width(properties)
+	
+	if road_width > 0:
+		# Creează mesh 3D pentru drum (suprafață cu lățime)
+		_create_road_mesh(points, road_width, properties)
+	else:
+		# Fallback: linie simplă pentru non-drumuri
+		var line = MeshInstance3D.new()
+		var immediate_mesh = ImmediateMesh.new()
+		immediate_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		for point in points:
+			immediate_mesh.surface_add_vertex(point)
+		immediate_mesh.surface_end()
+		line.mesh = immediate_mesh
+		var material = StandardMaterial3D.new()
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.albedo_color = Color(0.5, 0.5, 0.5, 1.0)
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		line.set_surface_override_material(0, material)
+		add_child(line)
+
+# Determină lățimea drumului din proprietăți sau estimată din tip
+func _get_road_width(properties: Dictionary) -> float:
+	# 1. Verifică dacă există width explicit
+	if properties.has("width"):
+		var width_str = str(properties.width)
+		# Elimină unitatea "m" dacă există
+		width_str = width_str.replace("m", "").replace(" ", "")
+		return float(width_str)
+	
+	# 2. Calculează din număr de benzi (lanes)
+	if properties.has("lanes"):
+		var lanes = int(properties.lanes)
+		return lanes * 3.5  # 3.5m per bandă (standard)
+	
+	# 3. Estimează din tipul de drum (highway type)
+	if properties.has("highway"):
+		var highway_type = properties.highway
+		# Lățimi standard în metri bazate pe tipul de drum
+		var default_widths = {
+			"motorway": 12.0,
+			"trunk": 10.0,
+			"primary": 8.0,
+			"secondary": 7.0,
+			"tertiary": 6.0,
+			"residential": 5.0,
+			"service": 3.0,
+			"unclassified": 4.0,
+			"living_street": 4.0,
+			"footway": 2.0,
+			"path": 1.5,
+			"cycleway": 2.0,
+			"pedestrian": 3.0,
+			"steps": 1.5
+		}
+		if default_widths.has(highway_type):
+			return default_widths[highway_type]
+		else:
+			return 4.0  # Lățime default pentru tipuri necunoscute
+	
+	return 0.0  # Nu este drum, returnează 0
+
+# Creează mesh 3D pentru drum cu lățime
+func _create_road_mesh(points: Array, width: float, properties: Dictionary):
+	if points.size() < 2:
+		return
+	
+	var mesh_instance = MeshInstance3D.new()
+	var array_mesh = ArrayMesh.new()
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	var vertices = PackedVector3Array()
+	var indices = PackedInt32Array()
+	var normals = PackedVector3Array()
+	
+	var half_width = width / 2.0
+	var road_elevation = 0.05  # Ridică drumul 5cm deasupra solului pentru vizibilitate
+	
+	# Generează vârfurile pentru fiecare segment
+	for i in range(points.size()):
+		var point = points[i]
+		point.z += road_elevation  # Ridică drumul puțin deasupra nivelului 0
+		
+		# Calculează direcția perpendiculară (pentru lățimea drumului)
+		var direction = Vector3.ZERO
+		if i == 0:
+			# Primul punct - folosește direcția către următorul
+			direction = (points[i + 1] - point).normalized()
+		elif i == points.size() - 1:
+			# Ultimul punct - folosește direcția de la precedent
+			direction = (point - points[i - 1]).normalized()
+		else:
+			# Punct intermediar - medie între direcțiile adiacente
+			var dir_prev = (point - points[i - 1]).normalized()
+			var dir_next = (points[i + 1] - point).normalized()
+			direction = (dir_prev + dir_next).normalized()
+		
+		# Perpendicular în plan XY (Z este verticală)
+		var perpendicular = Vector3(-direction.y, direction.x, 0).normalized()
+		
+		# Adaugă vârfurile pentru laturile drumului
+		var left = point + perpendicular * half_width
+		var right = point - perpendicular * half_width
+		
+		vertices.append(left)
+		normals.append(Vector3(0, 0, 1))  # Normală în sus
+		vertices.append(right)
+		normals.append(Vector3(0, 0, 1))
+	
+	# Creează triunghiuri pentru suprafața drumului
+	for i in range(points.size() - 1):
+		var base = i * 2
+		# Primul triunghi
+		indices.append(base)
+		indices.append(base + 1)
+		indices.append(base + 2)
+		# Al doilea triunghi
+		indices.append(base + 1)
+		indices.append(base + 3)
+		indices.append(base + 2)
+	
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh_instance.mesh = array_mesh
+	
+	# Material pentru drum
+	var material = StandardMaterial3D.new()
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	
+	# Culori bazate pe tip
+	if properties.has("highway"):
+		var highway_type = properties.highway
+		if highway_type in ["motorway", "trunk"]:
+			material.albedo_color = Color(0.2, 0.2, 0.2, 1.0)  # Negru pentru drumuri majore
+		elif highway_type in ["primary", "secondary", "tertiary"]:
+			material.albedo_color = Color(0.3, 0.3, 0.3, 1.0)  # Gri închis
+		elif highway_type == "residential":
+			material.albedo_color = Color(0.4, 0.4, 0.4, 1.0)  # Gri mediu
+		elif highway_type in ["footway", "path", "cycleway"]:
+			material.albedo_color = Color(0.6, 0.5, 0.4, 1.0)  # Maro pentru poteci
+		else:
+			material.albedo_color = Color(0.45, 0.45, 0.45, 1.0)  # Gri default
+	else:
+		material.albedo_color = Color(0.5, 0.5, 0.5, 1.0)
+	
+	mesh_instance.set_surface_override_material(0, material)
+	add_child(mesh_instance)
+
+func _geojson_create_point(coordinates: Array, properties: Dictionary, scale_factor: float, center_lat: float, center_lon: float, all_points: Array):
+	var marker = CSGSphere3D.new()
+	marker.radius = 1.0
+	var lon = coordinates[0]
+	var lat = coordinates[1]
+	marker.position = _geojson_latlon_to_local(lat, lon, scale_factor, center_lat, center_lon)
+	all_points.append(marker.position)
+	var material = StandardMaterial3D.new()
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED  # Fața dublă pentru markere
+	material.albedo_color = Color(1.0, 0.3, 0.3, 1.0)
+	marker.material = material
+	add_child(marker)
+
+func _geojson_latlon_to_local(lat: float, lon: float, scale_factor: float, center_lat: float, center_lon: float) -> Vector3:
+	var x = (lon - center_lon) * scale_factor
+	var y = (lat - center_lat) * scale_factor
+	return Vector3(x, y, 0)
+
+# === CITYJSON INTEGRATION ===
+# Încarcă și afișează fișiere CityJSON (format 3D Tiles pentru clădiri urbane)
+func load_cityjson(file_path: String, lod_preference: String = "2.2"):
+	"""
+	Încarcă fișiere CityJSON/JSONL cu clădiri 3D complete
+	@param file_path: Calea către fișierul .jsonl sau .json
+	@param lod_preference: Nivel de detaliu preferat (1.2, 1.3, 2.2, etc.)
+	"""
+	print("[CityJSON] Starting CityJSON load from: ", file_path)
+	
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		print("[CityJSON] ERROR: Cannot open file: ", file_path)
+		return
+	
+	var transform_data = {}
+	var buildings_count = 0
+	var vertices_cache = []
+	var line_number = 0
+	var global_center = Vector3.ZERO
+	var global_bounds_min = Vector3(INF, INF, INF)
+	var global_bounds_max = Vector3(-INF, -INF, -INF)
+	var all_buildings_data = []  # Stocăm temporar toate clădirile pentru procesare în două treceri
+	
+	# Citește fișierul linie cu linie (format JSONL)
+	while not file.eof_reached():
+		var line = file.get_line().strip_edges()
+		line_number += 1
+		
+		if line.is_empty():
+			continue
+		
+		var json = JSON.new()
+		var parse_result = json.parse(line)
+		
+		if parse_result != OK:
+			print("[CityJSON] ERROR parsing line ", line_number, ": ", json.get_error_message())
+			continue
+		
+		var data = json.data
+		
+		# Prima linie conține metadata și transform
+		if data.has("type") and data["type"] == "CityJSON":
+			print("[CityJSON] Found metadata - version: ", data.get("version", "unknown"))
+			if data.has("transform"):
+				transform_data = data["transform"]
+				print("[CityJSON] Transform found - scale: ", transform_data.get("scale"), " translate: ", transform_data.get("translate"))
+			continue
+		
+		# Liniile următoare sunt CityJSONFeature cu clădiri
+		if data.has("type") and data["type"] == "CityJSONFeature":
+			var feature_id = data.get("id", "unknown")
+			var city_objects = data.get("CityObjects", {})
+			vertices_cache = data.get("vertices", [])
+			
+			# Transformă vertexurile și calculează bounds
+			var transformed_vertices = _cityjson_transform_vertices(vertices_cache, transform_data)
+			
+			# Actualizează bounds globale
+			for vertex in transformed_vertices:
+				global_bounds_min.x = min(global_bounds_min.x, vertex.x)
+				global_bounds_min.y = min(global_bounds_min.y, vertex.y)
+				global_bounds_min.z = min(global_bounds_min.z, vertex.z)
+				global_bounds_max.x = max(global_bounds_max.x, vertex.x)
+				global_bounds_max.y = max(global_bounds_max.y, vertex.y)
+				global_bounds_max.z = max(global_bounds_max.z, vertex.z)
+			
+			# Stochează datele pentru procesare ulterioară
+			all_buildings_data.append({
+				"city_objects": city_objects,
+				"vertices": transformed_vertices
+			})
+	
+	file.close()
+	
+	# Calculează centrul scenei
+	global_center = (global_bounds_min + global_bounds_max) * 0.5
+	print("[CityJSON] Scene bounds: min=", global_bounds_min, " max=", global_bounds_max)
+	print("[CityJSON] Scene center: ", global_center, " - centering all buildings to origin")
+	
+	# Acum procesează toate clădirile cu offset către centru
+	for building_data in all_buildings_data:
+		var city_objects = building_data["city_objects"]
+		var vertices = building_data["vertices"]
+		
+		# Centrează vertexurile la origine
+		var centered_vertices = []
+		for vertex in vertices:
+			centered_vertices.append(vertex - global_center)
+		
+		# Procesează fiecare obiect din feature (clădiri, părți de clădiri, etc.)
+		for obj_id in city_objects.keys():
+			var city_obj = city_objects[obj_id]
+			var obj_type = city_obj.get("type", "")
+			
+			# Doar clădiri și părți de clădiri
+			if obj_type in ["Building", "BuildingPart"]:
+				_cityjson_create_building_direct(city_obj, obj_id, centered_vertices, lod_preference)
+				buildings_count += 1
+				
+				# Așteaptă periodic pentru a nu bloca UI-ul
+				if buildings_count % 50 == 0:
+					print("[CityJSON] Processed ", buildings_count, " buildings...")
+					await get_tree().process_frame
+	
+	print("[CityJSON] ✓ Loaded ", buildings_count, " buildings from CityJSON")
+	
+	# Încadrează camera la toate clădirile
+	_fit_camera_to_scene()
+
+func _cityjson_create_building_direct(city_obj: Dictionary, obj_id: String, centered_vertices: Array, lod_preference: String):
+	"""
+	Creează meshuri 3D pentru o clădire din CityJSON (cu vertexuri deja transformate și centrate)
+	"""
+	var geometries = city_obj.get("geometry", [])
+	
+	if geometries.is_empty():
+		return
+	
+	# Lista de prioritate pentru LoD (încearcă mai multe variante)
+	var lod_priority = [lod_preference, "2.2", "1.3", "1.2", "1.0", "0"]
+	
+	# Caută geometria cu cel mai bun LoD disponibil
+	var selected_geom = null
+	var selected_lod = ""
+	
+	for preferred_lod in lod_priority:
+		for geom in geometries:
+			if str(geom.get("lod", "")) == str(preferred_lod):
+				selected_geom = geom
+				selected_lod = str(preferred_lod)
+				break
+		if selected_geom:
+			break
+	
+	# Dacă nimic nu s-a găsit, ia prima geometrie disponibilă
+	if not selected_geom and geometries.size() > 0:
+		selected_geom = geometries[0]
+		selected_lod = str(selected_geom.get("lod", "unknown"))
+		print("[CityJSON] Warning: No standard LoD found for ", obj_id, ", using LoD ", selected_lod)
+	
+	if not selected_geom:
+		return
+	
+	# Afișează doar dacă nu e LoD-ul preferat
+	if selected_lod != lod_preference and selected_lod != "0":
+		print("[CityJSON] Info: Using LoD ", selected_lod, " for ", obj_id, " (preferred ", lod_preference, " not available)")
+	
+	var geom_type = selected_geom.get("type", "")
+	var boundaries = selected_geom.get("boundaries", [])
+	
+	# Procesează geometria în funcție de tip (vertexurile sunt deja centrate)
+	match geom_type:
+		"Solid":
+			_cityjson_create_solid(boundaries, centered_vertices, obj_id, city_obj)
+		"MultiSurface":
+			_cityjson_create_multisurface(boundaries, centered_vertices, obj_id, city_obj)
+		"CompositeSolid":
+			# CompositeSolid = array de Solid-uri
+			for solid_boundaries in boundaries:
+				_cityjson_create_solid(solid_boundaries, centered_vertices, obj_id, city_obj)
+		_:
+			print("[CityJSON] Unsupported geometry type: ", geom_type)
+
+func _cityjson_transform_vertices(vertices: Array, transform: Dictionary) -> Array:
+	"""
+	Aplică transformarea CityJSON (scale + translate) pe vertexuri
+	"""
+	var scale = transform.get("scale", [0.001, 0.001, 0.001])
+	var translate = transform.get("translate", [0.0, 0.0, 0.0])
+	
+	var result = []
+	
+	for vertex in vertices:
+		if vertex.size() != 3:
+			continue
+		
+		# Aplică scale și translate conform spec CityJSON
+		var x = vertex[0] * scale[0] + translate[0]
+		var y = vertex[1] * scale[1] + translate[1]
+		var z = vertex[2] * scale[2] + translate[2]
+		
+		# Sistemul nostru: X=est-vest, Y=nord-sud, Z=verticală
+		# CityJSON folosește coordonate geografice locale
+		result.append(Vector3(x, y, z))
+	
+	return result
+
+func _cityjson_create_solid(boundaries: Array, vertices: Array, obj_id: String, city_obj: Dictionary):
+	"""
+	Creează mesh pentru geometrie Solid (volum 3D închis)
+	Un Solid conține un array de shell-uri (exterior + eventuale hole-uri interioare)
+	Fiecare shell e un array de suprafețe (poligoane)
+	"""
+	if boundaries.is_empty():
+		return
+	
+	# Primul element e shell-ul exterior, restul sunt hole-uri (de obicei nu există)
+	var exterior_shell = boundaries[0]
+	
+	var surface_tool = SurfaceTool.new()
+	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	
+	# Procesează fiecare suprafață (perete, acoperiș, podea, etc.)
+	for surface in exterior_shell:
+		# O suprafață e un array de ring-uri (primul = exterior, restul = hole-uri)
+		if surface.is_empty():
+			continue
+		
+		var exterior_ring = surface[0]
+		
+		# Exterior ring = lista de indecși în array-ul de vertexuri
+		if exterior_ring.size() < 3:
+			continue
+		
+		# Triangulează poligonul (convertește indices în vertexuri 3D)
+		var poly_vertices = []
+		for idx in exterior_ring:
+			if idx < vertices.size():
+				poly_vertices.append(vertices[idx])
+		
+		# Adaugă triunghiuri cu Ear Clipping
+		var indices = _triangulate_polygon_3d(poly_vertices)
+		
+		for i in range(0, indices.size(), 3):
+			if i + 2 < indices.size():
+				var v0 = poly_vertices[indices[i]]
+				var v1 = poly_vertices[indices[i + 1]]
+				var v2 = poly_vertices[indices[i + 2]]
+				
+				# Calculează normala
+				var normal = (v1 - v0).cross(v2 - v0).normalized()
+				
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v0)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v1)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v2)
+	
+	var mesh = surface_tool.commit()
+	
+	# Creează MeshInstance3D
+	var mesh_instance = MeshInstance3D.new()
+	mesh_instance.mesh = mesh
+	mesh_instance.name = obj_id
+	
+	# Material cu culoare bazată pe proprietăți
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = _cityjson_get_building_color(city_obj)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # Double-sided
+	mesh_instance.material_override = mat
+	
+	add_child(mesh_instance)
+	print("[CityJSON] Created Solid mesh: ", obj_id, " with ", mesh.get_surface_count(), " surfaces")
+
+func _cityjson_create_multisurface(boundaries: Array, vertices: Array, obj_id: String, city_obj: Dictionary):
+	"""
+	Creează mesh pentru geometrie MultiSurface (colecție de suprafețe 2D, folosit pentru LoD 0)
+	Pentru LoD 0 (footprint), extrudăm în sus pentru a crea un volum simplu
+	"""
+	# Încearcă să obții înălțimea din atribute
+	var attributes = city_obj.get("attributes", {})
+	var height = attributes.get("b3_h_dak_max", attributes.get("measuredHeight", 10.0))
+	
+	# Dacă înălțimea e prea mică sau invalida, folosește 10m ca default
+	if height < 1.0:
+		height = 10.0
+	
+	var surface_tool = SurfaceTool.new()
+	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	
+	# Procesează fiecare suprafață (de obicei e doar footprint-ul)
+	for surface in boundaries:
+		if surface.is_empty():
+			continue
+		
+		var exterior_ring = surface[0]
+		
+		if exterior_ring.size() < 3:
+			continue
+		
+		var poly_vertices_base = []
+		for idx in exterior_ring:
+			if idx < vertices.size():
+				poly_vertices_base.append(vertices[idx])
+		
+		# Creează și vertexurile de sus (extrudate pe Z)
+		var poly_vertices_top = []
+		for v in poly_vertices_base:
+			poly_vertices_top.append(v + Vector3(0, 0, height))
+		
+		# Triangulează baza (jos)
+		var indices = _triangulate_polygon_3d(poly_vertices_base)
+		for i in range(0, indices.size(), 3):
+			if i + 2 < indices.size():
+				var v0 = poly_vertices_base[indices[i]]
+				var v1 = poly_vertices_base[indices[i + 1]]
+				var v2 = poly_vertices_base[indices[i + 2]]
+				
+				var normal = Vector3(0, 0, -1)  # Normal în jos pentru bază
+				
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v2)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v1)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v0)
+		
+		# Triangulează acoperișul (sus)
+		for i in range(0, indices.size(), 3):
+			if i + 2 < indices.size():
+				var v0 = poly_vertices_top[indices[i]]
+				var v1 = poly_vertices_top[indices[i + 1]]
+				var v2 = poly_vertices_top[indices[i + 2]]
+				
+				var normal = Vector3(0, 0, 1)  # Normal în sus pentru acoperiș
+				
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v0)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v1)
+				surface_tool.set_normal(normal)
+				surface_tool.add_vertex(v2)
+		
+		# Creează pereții laterali
+		for i in range(poly_vertices_base.size()):
+			var next_i = (i + 1) % poly_vertices_base.size()
+			
+			var v0_base = poly_vertices_base[i]
+			var v1_base = poly_vertices_base[next_i]
+			var v0_top = poly_vertices_top[i]
+			var v1_top = poly_vertices_top[next_i]
+			
+			# Calculează normala pentru perete
+			var edge = v1_base - v0_base
+			var up = Vector3(0, 0, 1)
+			var normal = edge.cross(up).normalized()
+			
+			# Triunghi 1
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v0_base)
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v1_base)
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v1_top)
+			
+			# Triunghi 2
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v0_base)
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v1_top)
+			surface_tool.set_normal(normal)
+			surface_tool.add_vertex(v0_top)
+	
+	var mesh = surface_tool.commit()
+	
+	var mesh_instance = MeshInstance3D.new()
+	mesh_instance.mesh = mesh
+	mesh_instance.name = obj_id
+	
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = _cityjson_get_building_color(city_obj)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh_instance.material_override = mat
+	
+	add_child(mesh_instance)
+	print("[CityJSON] Created MultiSurface (extruded LoD 0) mesh: ", obj_id, " with height ", height, "m")
+
+func _triangulate_polygon_3d(points: Array) -> PackedInt32Array:
+	"""
+	Triangulează un poligon 3D arbitrar prin proiectare pe cel mai bun plan
+	"""
+	if points.size() < 3:
+		return PackedInt32Array()
+	
+	# Calculează normala poligonului pentru a determina planul de proiectare
+	var normal = Vector3.ZERO
+	for i in range(points.size()):
+		var v0 = points[i]
+		var v1 = points[(i + 1) % points.size()]
+		normal += v0.cross(v1)
+	normal = normal.normalized()
+	
+	# Determină care axă să eliminăm pentru proiectare 2D
+	# Eliminăm axa cu cea mai mare componentă în normală
+	var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
+	var project_axis = 2  # Default: proiectăm pe XY (eliminăm Z)
+	
+	if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
+		project_axis = 0  # Proiectăm pe YZ (eliminăm X)
+	elif abs_normal.y > abs_normal.x and abs_normal.y > abs_normal.z:
+		project_axis = 1  # Proiectăm pe XZ (eliminăm Y)
+	
+	# Proiectează pe 2D
+	var points_2d = []
+	for p in points:
+		match project_axis:
+			0: points_2d.append(Vector2(p.y, p.z))
+			1: points_2d.append(Vector2(p.x, p.z))
+			_: points_2d.append(Vector2(p.x, p.y))
+	
+	# Folosește algoritmul existent de triangulație 2D
+	return _triangulate_polygon_2d_from_3d(points_2d)
+
+func _triangulate_polygon_2d_from_3d(points_2d: Array) -> PackedInt32Array:
+	"""
+	Ear Clipping pentru poligoane 2D proiectate din 3D
+	"""
+	if points_2d.size() < 3:
+		return PackedInt32Array()
+	
+	var indices = PackedInt32Array()
+	var remaining = []
+	for i in range(points_2d.size()):
+		remaining.append(i)
+	
+	var iterations = 0
+	var max_iterations = points_2d.size() * 3
+	
+	while remaining.size() > 3 and iterations < max_iterations:
+		iterations += 1
+		var found_ear = false
+		
+		for i in range(remaining.size()):
+			var i_prev = (i - 1 + remaining.size()) % remaining.size()
+			var i_next = (i + 1) % remaining.size()
+			
+			var idx_prev = remaining[i_prev]
+			var idx_curr = remaining[i]
+			var idx_next = remaining[i_next]
+			
+			var p_prev = points_2d[idx_prev]
+			var p_curr = points_2d[idx_curr]
+			var p_next = points_2d[idx_next]
+			
+			if not _is_convex_vertex(p_prev, p_curr, p_next):
+				continue
+			
+			var is_ear = true
+			for j in range(remaining.size()):
+				if j == i_prev or j == i or j == i_next:
+					continue
+				
+				var p_test = points_2d[remaining[j]]
+				if _point_in_triangle_2d(p_test, p_prev, p_curr, p_next):
+					is_ear = false
+					break
+			
+			if is_ear:
+				indices.append(idx_prev)
+				indices.append(idx_curr)
+				indices.append(idx_next)
+				remaining.remove_at(i)
+				found_ear = true
+				break
+		
+		if not found_ear:
+			break
+	
+	if remaining.size() == 3:
+		indices.append(remaining[0])
+		indices.append(remaining[1])
+		indices.append(remaining[2])
+	
+	return indices
+
+func _cityjson_get_building_color(city_obj: Dictionary) -> Color:
+	"""
+	Determină culoarea clădirii bazată pe atribute
+	"""
+	var attributes = city_obj.get("attributes", {})
+	
+	# Culoare bazată pe tipul de clădire sau înălțime
+	var obj_type = city_obj.get("type", "")
+	
+	if obj_type == "BuildingPart":
+		return Color(0.8, 0.7, 0.6)  # Bej pentru părți de clădiri
+	
+	# Culoare bazată pe înălțime
+	var height = attributes.get("b3_h_dak_max", 10.0)
+	
+	if height > 20.0:
+		return Color(0.3, 0.3, 0.5)  # Albastru închis pentru clădiri înalte
+	elif height > 10.0:
+		return Color(0.6, 0.6, 0.7)  # Gri pentru clădiri medii
+	else:
+		return Color(0.85, 0.8, 0.75)  # Bej deschis pentru clădiri mici
+	
+func _fit_camera_to_scene():
+	"""
+	Încadrează camera pentru a vedea toate clădirile din scenă
+	"""
+	var bbox = _calculate_scene_bounding_box()
+	if bbox.has_volume():
+		_fit_camera_to_bbox(bbox)
+		print("[CityJSON] Camera fitted to scene bounds: ", bbox)
+
+# === CESIUM 3D TILES INTEGRATION ===
+# Încarcă și afișează Cesium 3D Tiles (format standard pentru date geospațiale 3D masive)
+func load_3d_tiles(tileset_path: String, max_depth: int = 3):
+	"""
+	Încarcă un tileset Cesium 3D Tiles și creează geometrie în scenă
+	@param tileset_path: Calea către fișierul tileset.json principal
+	@param max_depth: Adâncimea maximă de traversare a ierarhiei (pentru performanță)
+	"""
+	print("[3D Tiles] Starting Cesium 3D Tiles load from: ", tileset_path)
+	
+	var file = FileAccess.open(tileset_path, FileAccess.READ)
+	if not file:
+		print("[3D Tiles] ERROR: Cannot open tileset file: ", tileset_path)
+		return
+	
+	var json_str = file.get_as_text()
+	file.close()
+	
+	var json = JSON.new()
+	var parse_result = json.parse(json_str)
+	
+	if parse_result != OK:
+		print("[3D Tiles] ERROR parsing tileset JSON: ", json.get_error_message())
+		return
+	
+	var tileset_data = json.data
+	
+	# Verifică versiunea și asset
+	var asset = tileset_data.get("asset", {})
+	var version = asset.get("version", "unknown")
+	print("[3D Tiles] Tileset version: ", version)
+	
+	# Obține transformarea geometrică globală (dacă există)
+	var geometric_error = tileset_data.get("geometricError", 0.0)
+	print("[3D Tiles] Root geometric error: ", geometric_error)
+	
+	# Procesează root tile-ul
+	var root_tile = tileset_data.get("root", {})
+	var base_path = tileset_path.get_base_dir()
+	
+	var tiles_loaded = 0
+	var global_bounds_min = Vector3(INF, INF, INF)
+	var global_bounds_max = Vector3(-INF, -INF, -INF)
+	var all_tiles_data = []
+	
+	# Colectează toate tile-urile recursiv
+	_collect_3dtiles_recursive(root_tile, base_path, 0, max_depth, all_tiles_data)
+	
+	print("[3D Tiles] Collected ", all_tiles_data.size(), " tiles, loading content...")
+	
+	# Încarcă conținutul fiecărui tile
+	for tile_data in all_tiles_data:
+		var content_uri = tile_data["content_uri"]
+		var transform_matrix = tile_data["transform"]
+		
+		# Încarcă fișierul de conținut (.b3dm, .glb, .gltf, etc.)
+		var content_loaded = await _load_3dtile_content(content_uri, transform_matrix, global_bounds_min, global_bounds_max)
+		
+		if content_loaded:
+			tiles_loaded += 1
+		
+		# Așteaptă periodic pentru UI
+		if tiles_loaded % 10 == 0:
+			print("[3D Tiles] Loaded ", tiles_loaded, " tiles...")
+			await get_tree().process_frame
+	
+	print("[3D Tiles] ✓ Loaded ", tiles_loaded, " tiles from Cesium 3D Tiles")
+	
+	# Centrează scena la origine doar dacă am încărcat cel puțin un tile
+	if tiles_loaded > 0 and global_bounds_min.x != INF:
+		var global_center = (global_bounds_min + global_bounds_max) * 0.5
+		print("[3D Tiles] Scene bounds: min=", global_bounds_min, " max=", global_bounds_max)
+		print("[3D Tiles] Centering to origin from: ", global_center)
+		
+		# Offset toate obiectele încărcate
+		for child in get_children():
+			if child is MeshInstance3D and child.has_meta("3dtiles"):
+				child.position -= global_center
+		
+		# Încadrează camera doar dacă am încărcat tile-uri cu succes
+		_fit_camera_to_scene()
+	elif tiles_loaded == 0:
+		print("[3D Tiles] WARNING: No tiles were loaded successfully, skipping camera fit")
+
+func _collect_3dtiles_recursive(tile: Dictionary, base_path: String, depth: int, max_depth: int, collected: Array):
+	"""
+	Colectează recursiv toate tile-urile din ierarhie
+	"""
+	if depth > max_depth:
+		return
+	
+	# Obține conținutul tile-ului
+	var content = tile.get("content", {})
+	var content_uri = content.get("uri", content.get("url", ""))
+	
+	if not content_uri.is_empty():
+		# Construiește calea completă
+		var full_path = base_path + "/" + content_uri
+		
+		# Obține transformarea tile-ului (matrice 4x4 sau boundingVolume)
+		var transform = tile.get("transform", null)
+		
+		collected.append({
+			"content_uri": full_path,
+			"transform": transform,
+			"depth": depth
+		})
+	
+	# Procesează copiii recursiv
+	var children = tile.get("children", [])
+	for child_tile in children:
+		_collect_3dtiles_recursive(child_tile, base_path, depth + 1, max_depth, collected)
+
+func _load_3dtile_content(content_uri: String, transform_matrix, bounds_min: Vector3, bounds_max: Vector3) -> bool:
+	"""
+	Încarcă conținutul unui tile (b3dm, glb, gltf, pnts, i3dm, cmpt)
+	"""
+	var extension = content_uri.get_extension().to_lower()
+	
+	match extension:
+		"b3dm":
+			return _load_b3dm_tile(content_uri, transform_matrix, bounds_min, bounds_max)
+		"glb", "gltf":
+			return _load_gltf_tile(content_uri, transform_matrix, bounds_min, bounds_max)
+		"i3dm":
+			return await _load_i3dm_tile(content_uri, transform_matrix, bounds_min, bounds_max)
+		"pnts":
+			print("[3D Tiles] Point cloud tiles (PNTS) not yet supported: ", content_uri)
+			return false
+		"cmpt":
+			print("[3D Tiles] Composite tiles (CMPT) not yet supported: ", content_uri)
+			return false
+		_:
+			print("[3D Tiles] Unknown tile format: ", extension)
+			return false
+
+func _load_b3dm_tile(file_path: String, transform_matrix, bounds_min: Vector3, bounds_max: Vector3) -> bool:
+	"""
+	Încarcă un tile Batched 3D Model (.b3dm)
+	Format: Header (28 bytes) + Feature Table (JSON + Binary) + Batch Table + GLB
+	"""
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		print("[3D Tiles] ERROR: Cannot open B3DM file: ", file_path)
+		return false
+	
+	# Citește header-ul B3DM (28 bytes)
+	var magic = file.get_buffer(4).get_string_from_ascii()
+	if magic != "b3dm":
+		print("[3D Tiles] ERROR: Invalid B3DM magic header: ", magic)
+		file.close()
+		return false
+	
+	var version = file.get_32()
+	var byte_length = file.get_32()
+	var feature_table_json_byte_length = file.get_32()
+	var feature_table_binary_byte_length = file.get_32()
+	var batch_table_json_byte_length = file.get_32()
+	var batch_table_binary_byte_length = file.get_32()
+	
+	print("[3D Tiles] B3DM Header - version: ", version, " total bytes: ", byte_length)
+	
+	# Skip feature table și batch table (nu le folosim pentru moment)
+	file.seek(file.get_position() + feature_table_json_byte_length + feature_table_binary_byte_length)
+	file.seek(file.get_position() + batch_table_json_byte_length + batch_table_binary_byte_length)
+	
+	# Restul e GLB - extrage-l într-un fișier temporar
+	var glb_data = file.get_buffer(file.get_length() - file.get_position())
+	file.close()
+	
+	# Salvează temporar GLB-ul
+	var temp_glb_path = "user://temp_b3dm_" + str(file_path.get_file().get_basename()) + ".glb"
+	var temp_file = FileAccess.open(temp_glb_path, FileAccess.WRITE)
+	if temp_file:
+		temp_file.store_buffer(glb_data)
+		temp_file.close()
+		
+		# Încarcă GLB-ul cu funcția existentă
+		var success = _load_gltf_tile(temp_glb_path, transform_matrix, bounds_min, bounds_max)
+		
+		# Șterge fișierul temporar
+		DirAccess.remove_absolute(temp_glb_path)
+		
+		return success
+	
+	return false
+
+func _load_i3dm_tile(file_path: String, transform_matrix, bounds_min: Vector3, bounds_max: Vector3) -> bool:
+	"""
+	Încarcă un tile Instanced 3D Model (.i3dm)
+	Format: Header (32 bytes) + Feature Table (JSON + Binary) + Batch Table + GLB/GLTF (extern sau încapsulat)
+	I3DM permite instanțierea aceluiași model 3D în mai multe locații (ex: copaci, stâlpi, etc.)
+	"""
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		print("[3D Tiles] ERROR: Cannot open I3DM file: ", file_path)
+		return false
+	
+	# Citește header-ul I3DM (32 bytes)
+	var magic = file.get_buffer(4).get_string_from_ascii()
+	if magic != "i3dm":
+		print("[3D Tiles] ERROR: Invalid I3DM magic header: ", magic)
+		file.close()
+		return false
+	
+	var version = file.get_32()
+	var byte_length = file.get_32()
+	var feature_table_json_byte_length = file.get_32()
+	var feature_table_binary_byte_length = file.get_32()
+	var batch_table_json_byte_length = file.get_32()
+	var batch_table_binary_byte_length = file.get_32()
+	var gltf_format = file.get_32()  # 0 = URI extern, 1 = GLB încapsulat
+	
+	print("[3D Tiles] I3DM Header - version: ", version, " gltf_format: ", gltf_format)
+	
+	# Citește Feature Table JSON pentru a obține pozițiile instanțelor
+	var feature_table_json_str = file.get_buffer(feature_table_json_byte_length).get_string_from_utf8()
+	var json = JSON.new()
+	var parse_result = json.parse(feature_table_json_str)
+	
+	if parse_result != OK:
+		print("[3D Tiles] ERROR parsing I3DM feature table: ", json.get_error_message())
+		file.close()
+		return false
+	
+	var feature_table = json.data
+	var instances_length = feature_table.get("INSTANCES_LENGTH", 0)
+	
+	if instances_length == 0:
+		print("[3D Tiles] WARNING: No instances in I3DM tile")
+		file.close()
+		return false
+	
+	print("[3D Tiles] I3DM contains ", instances_length, " instances")
+	
+	# Obține pozițiile instanțelor din feature table binary
+	var position_offset = feature_table.get("POSITION", {}).get("byteOffset", 0)
+	
+	# Skip la binary data
+	file.seek(32 + feature_table_json_byte_length + position_offset)
+	
+	var instance_positions = []
+	for i in range(instances_length):
+		var x = file.get_float()
+		var y = file.get_float()
+		var z = file.get_float()
+		instance_positions.append(Vector3(x, y, z))
+	
+	# Skip batch table
+	file.seek(32 + feature_table_json_byte_length + feature_table_binary_byte_length)
+	file.seek(file.get_position() + batch_table_json_byte_length + batch_table_binary_byte_length)
+	
+	# Încarcă modelul GLB (încapsulat sau extern)
+	var gltf_document = GLTFDocument.new()
+	var gltf_state = GLTFState.new()
+	var error = OK
+	
+	if gltf_format == 1:
+		# GLB încapsulat - extrage-l
+		var glb_data = file.get_buffer(file.get_length() - file.get_position())
+		file.close()
+		
+		# Verifică dacă avem date valide GLB (header magic: "glTF")
+		if glb_data.size() < 12:
+			print("[3D Tiles] ERROR: GLB data too small: ", glb_data.size(), " bytes")
+			return false
+		
+		var glb_magic = glb_data.slice(0, 4).get_string_from_ascii()
+		if glb_magic != "glTF":
+			print("[3D Tiles] ERROR: Invalid GLB magic in I3DM: ", glb_magic, " (expected 'glTF')")
+			return false
+		
+		print("[3D Tiles] Extracted GLB size: ", glb_data.size(), " bytes")
+		
+		# Debug: verifică primii 20 bytes din GLB
+		var debug_bytes = glb_data.slice(0, min(20, glb_data.size()))
+		var debug_str = ""
+		for i in range(min(20, glb_data.size())):
+			debug_str += "%02x " % debug_bytes[i]
+		print("[3D Tiles] GLB first bytes: ", debug_str)
+		
+		# Salvează GLB temporar în același director cu I3DM (nu user://)
+		# Acest lucru asigură că path-urile relative din GLB funcționează
+		var base_path = file_path.get_base_dir()
+		var temp_glb_name = "_temp_" + file_path.get_file().get_basename() + ".glb"
+		var temp_glb_path = base_path + "/" + temp_glb_name
+		
+		var temp_file = FileAccess.open(temp_glb_path, FileAccess.WRITE)
+		if not temp_file:
+			print("[3D Tiles] ERROR: Cannot create temp GLB at: ", temp_glb_path)
+			return false
+		
+		temp_file.store_buffer(glb_data)
+		temp_file.close()
+		
+		print("[3D Tiles] Saved temp GLB to: ", temp_glb_path)
+		
+		# Încarcă din fișierul temporar
+		error = gltf_document.append_from_file(temp_glb_path, gltf_state)
+		
+		# Șterge imediat fișierul temporar
+		DirAccess.remove_absolute(temp_glb_path)
+		
+		if error != OK:
+			print("[3D Tiles] append_from_file failed with code ", error, " for temp GLB: ", temp_glb_name)
+			print("[3D Tiles] NOTE: This GLB may use unsupported GLTF extensions (e.g., KHR_techniques_webgl)")
+			print("[3D Tiles] Skipping this tile and continuing with others...")
+	else:
+		# URI extern - citește URI din feature table
+		var gltf_uri = feature_table.get("glTF", "")
+		if gltf_uri.is_empty():
+			print("[3D Tiles] ERROR: No glTF URI in I3DM")
+			file.close()
+			return false
+		
+		var gltf_path = file_path.get_base_dir() + "/" + gltf_uri
+		file.close()
+		
+		# Încarcă din fișier extern
+		error = gltf_document.append_from_file(gltf_path, gltf_state)
+	
+	if error != OK:
+		print("[3D Tiles] ERROR loading I3DM GLTF, error code: ", error)
+		return false
+	
+	var base_scene = gltf_document.generate_scene(gltf_state)
+	
+	if not base_scene:
+		print("[3D Tiles] ERROR: Failed to generate scene from I3DM GLTF")
+		return false
+	
+	# Debug: afișează informații despre modelul de bază
+	print("[3D Tiles] Base model loaded, type: ", base_scene.get_class())
+	if base_scene is Node3D:
+		print("[3D Tiles] Base model has ", base_scene.get_child_count(), " children")
+		# Caută mesh-uri în copii
+		for child in base_scene.get_children():
+			if child is MeshInstance3D:
+				var aabb = child.get_aabb()
+				print("[3D Tiles] Found MeshInstance3D with AABB: ", aabb)
+				print("[3D Tiles] Mesh size: ", aabb.size)
+	
+	# Creează instanțe pentru fiecare poziție
+	var instance_count = 0
+	var first_pos_logged = false
+	
+	# Calculează centrul pozițiilor pentru a normaliza coordonatele ECEF
+	var positions_center = Vector3.ZERO
+	for pos in instance_positions:
+		positions_center += pos
+	positions_center /= instance_positions.size()
+	
+	print("[3D Tiles] Positions center (ECEF): ", positions_center)
+	print("[3D Tiles] Will offset all instances by this center to bring them near origin")
+	
+	for pos in instance_positions:
+		var instance = base_scene.duplicate()
+		
+		# Offsetează poziția relativă la centru pentru a aduce geometria la origine
+		var centered_pos = pos - positions_center
+		
+		# Convertește de la GLTF (Y în sus) la sistemul aplicației (Z în sus)
+		# GLTF: X=right, Y=up, Z=back
+		# App:  X=right, Y=back, Z=up
+		# Conversie: swap Y și Z
+		instance.position = Vector3(centered_pos.x, centered_pos.z, centered_pos.y)
+		
+		# Debug: afișează primele 3 poziții
+		if instance_count < 3:
+			print("[3D Tiles] Instance ", instance_count, " original position (ECEF): ", pos)
+			print("[3D Tiles] Instance ", instance_count, " centered position (GLTF Y-up): ", centered_pos)
+			print("[3D Tiles] Instance ", instance_count, " final position (App Z-up): ", instance.position)
+		
+		# Aplică transformarea tile-ului dacă există
+		if transform_matrix and typeof(transform_matrix) == TYPE_ARRAY and transform_matrix.size() == 16:
+			var mat = _array_to_transform3d(transform_matrix)
+			instance.transform = mat * instance.transform
+		
+		# Marchează cu metadata
+		instance.set_meta("3dtiles", true)
+		instance.set_meta("i3dm_instance", true)
+		instance.set_meta("source", file_path)
+		
+		# Actualizează bounds - trebuie să traversăm ierarhia
+		var instance_bounds = _get_node_bounds(instance)
+		if instance_bounds.has_volume():
+			var pos_min = instance_bounds.position
+			var pos_max = instance_bounds.position + instance_bounds.size
+			
+			bounds_min.x = min(bounds_min.x, pos_min.x)
+			bounds_min.y = min(bounds_min.y, pos_min.y)
+			bounds_min.z = min(bounds_min.z, pos_min.z)
+			
+			bounds_max.x = max(bounds_max.x, pos_max.x)
+			bounds_max.y = max(bounds_max.y, pos_max.y)
+			bounds_max.z = max(bounds_max.z, pos_max.z)
+		
+		add_child(instance)
+		instance_count += 1
+		
+		# Așteaptă periodic pentru UI
+		if instance_count % 50 == 0:
+			await get_tree().process_frame
+	
+	base_scene.queue_free()
+	
+	print("[3D Tiles] Loaded I3DM tile with ", instance_count, " instances: ", file_path.get_file())
+	print("[3D Tiles] Instance bounds updated: min=", bounds_min, " max=", bounds_max)
+	return true
+
+func _load_gltf_tile(file_path: String, transform_matrix, bounds_min: Vector3, bounds_max: Vector3) -> bool:
+	"""
+	Încarcă un tile GLB/GLTF folosind GLTFDocument
+	"""
+	var gltf_document = GLTFDocument.new()
+	var gltf_state = GLTFState.new()
+	
+	var error = gltf_document.append_from_file(file_path, gltf_state)
+	
+	if error != OK:
+		print("[3D Tiles] ERROR loading GLTF: ", file_path, " error code: ", error)
+		return false
+	
+	var scene = gltf_document.generate_scene(gltf_state)
+	
+	if not scene:
+		print("[3D Tiles] ERROR: Failed to generate scene from GLTF")
+		return false
+	
+	# Aplică transformarea dacă există
+	if transform_matrix and typeof(transform_matrix) == TYPE_ARRAY and transform_matrix.size() == 16:
+		var mat = _array_to_transform3d(transform_matrix)
+		scene.transform = mat
+	
+	# Marchează cu metadata
+	scene.set_meta("3dtiles", true)
+	scene.set_meta("source", file_path)
+	
+	# Actualizează bounds
+	_update_bounds_from_node(scene, bounds_min, bounds_max)
+	
+	add_child(scene)
+	print("[3D Tiles] Loaded GLTF tile: ", file_path.get_file())
+	
+	return true
+
+func _array_to_transform3d(matrix_array: Array) -> Transform3D:
+	"""
+	Convertește un array de 16 elemente (matrice 4x4 column-major) în Transform3D
+	"""
+	# Cesium folosește column-major order
+	var transform = Transform3D()
+	
+	transform.basis.x = Vector3(matrix_array[0], matrix_array[1], matrix_array[2])
+	transform.basis.y = Vector3(matrix_array[4], matrix_array[5], matrix_array[6])
+	transform.basis.z = Vector3(matrix_array[8], matrix_array[9], matrix_array[10])
+	transform.origin = Vector3(matrix_array[12], matrix_array[13], matrix_array[14])
+	
+	return transform
+
+func _get_node_bounds(node: Node3D) -> AABB:
+	"""
+	Calculează AABB-ul complet al unui nod, inclusiv copiii săi
+	"""
+	var combined_aabb = AABB()
+	var has_aabb = false
+	
+	# Verifică dacă acest nod are AABB
+	if node is MeshInstance3D:
+		var local_aabb = node.get_aabb()
+		combined_aabb = node.global_transform * local_aabb
+		has_aabb = true
+	elif node is VisualInstance3D and node.has_method("get_aabb"):
+		var local_aabb = node.get_aabb()
+		combined_aabb = node.global_transform * local_aabb
+		has_aabb = true
+	
+	# Merge cu AABB-urile copiilor
+	for child in node.get_children():
+		if child is Node3D:
+			var child_aabb = _get_node_bounds(child)
+			if child_aabb.has_volume():
+				if has_aabb:
+					combined_aabb = combined_aabb.merge(child_aabb)
+				else:
+					combined_aabb = child_aabb
+					has_aabb = true
+	
+	return combined_aabb
+
+func _update_bounds_from_node(node: Node3D, bounds_min: Vector3, bounds_max: Vector3):
+	"""
+	Actualizează bounds globale din geometria unui nod
+	"""
+	if node is MeshInstance3D:
+		var aabb = node.get_aabb()
+		var global_aabb = node.global_transform * aabb
+		
+		bounds_min.x = min(bounds_min.x, global_aabb.position.x)
+		bounds_min.y = min(bounds_min.y, global_aabb.position.y)
+		bounds_min.z = min(bounds_min.z, global_aabb.position.z)
+		
+		var end = global_aabb.position + global_aabb.size
+		bounds_max.x = max(bounds_max.x, end.x)
+		bounds_max.y = max(bounds_max.y, end.y)
+		bounds_max.z = max(bounds_max.z, end.z)
+	
+	for child in node.get_children():
+		if child is Node3D:
+			_update_bounds_from_node(child, bounds_min, bounds_max)

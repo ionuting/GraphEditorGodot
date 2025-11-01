@@ -10,9 +10,9 @@ config_version=5
 
 [application]
 
-config/name="Viewer2D"
+config/name="Viewer2D (4.4)"
 config/description="2D CAD Viewer with Layout Generation"
-run/main_scene="res://main.tscn"
+run/main_scene="uid://c7d1j7ik5r8cj"
 config/features=PackedStringArray("4.4", "Forward Plus")
 run/low_processor_mode=true
 config/icon="res://icon.svg"
@@ -27,6 +27,10 @@ window/size/viewport_width=1920
 window/size/viewport_height=780
 window/size/borderless=true
 window/stretch/mode="viewport"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/cesium_godot/plugin.cfg")
 
 [file_customization]
 
