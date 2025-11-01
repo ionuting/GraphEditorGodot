@@ -1,0 +1,689 @@
+[
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_wood_1",
+    "uuid": "01a5d47d-06b2-4c89-8198-6843d5c84722",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.0
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      1.1999999999999924,
+      0.099999999999989,
+      1.199999999999999,
+      0.0999999999999748
+    ],
+    "perimeter": 2.5999999999999552,
+    "area": 0.11999999999997786,
+    "lateral_area": 0.3899999999999933,
+    "volume": 0.017999999999996675,
+    "vertices": [
+      [
+        1.200000000000003,
+        0.0999999999999908
+      ],
+      [
+        1.07e-14,
+        0.0999999999999908
+      ],
+      [
+        0.0,
+        1.8e-15
+      ],
+      [
+        1.199999999999999,
+        1.6e-14
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_wood_2",
+    "uuid": "1060c83a-eed1-4ca0-a292-d415a2ef264e",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.15
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.9,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.0999999999999907,
+      0.099999999999989,
+      0.0999999999999979,
+      0.0999999999999748
+    ],
+    "perimeter": 0.3999999999999524,
+    "area": 0.00999999999999762,
+    "lateral_area": 0.3599999999999572,
+    "volume": 0.008999999999997857,
+    "vertices": [
+      [
+        0.1000000000000014,
+        0.099999999999989
+      ],
+      [
+        1.07e-14,
+        0.099999999999989
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0999999999999979,
+        1.42e-14
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_wood_3",
+    "uuid": "df550b3e-955b-4883-aa2b-b686b2c14f5f",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.15
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.9,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.09999999999999098,
+      0.09999999999998899,
+      0.09999999999999809,
+      0.09999999999997479
+    ],
+    "perimeter": 0.39999999999995284,
+    "area": 0.009999999999997643,
+    "lateral_area": 0.3599999999999576,
+    "volume": 0.008999999999997848,
+    "vertices": [
+      [
+        1.200000000000003,
+        0.1000000000000014
+      ],
+      [
+        1.100000000000012,
+        0.1000000000000014
+      ],
+      [
+        1.100000000000001,
+        1.24e-14
+      ],
+      [
+        1.199999999999999,
+        2.66e-14
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_wood_4",
+    "uuid": "bcc6df98-ed6d-43d5-b062-aff1f1889b3f",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.15
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.9,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.09999999999999076,
+      0.099999999999989,
+      0.09999999999999787,
+      0.0999999999999748
+    ],
+    "perimeter": 0.3999999999999524,
+    "area": 0.009999999999997622,
+    "lateral_area": 0.3599999999999572,
+    "volume": 0.00899999999999785,
+    "vertices": [
+      [
+        0.6499999999999986,
+        0.0999999999999908
+      ],
+      [
+        0.5500000000000078,
+        0.0999999999999908
+      ],
+      [
+        0.5499999999999972,
+        1.8e-15
+      ],
+      [
+        0.649999999999995,
+        1.6e-14
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_glass_1",
+    "uuid": "31c0dd8c-dbb5-473e-a909-68611957b49a",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "glass",
+    "ifc_type": "window",
+    "component_layer": "glass",
+    "material_layer": "glass",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      1.05
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.4499999999999993,
+      0.020000000000038702,
+      0.45000000000000634,
+      0.0200000000000244
+    ],
+    "perimeter": 0.9400000000000688,
+    "area": 0.009000000000014255,
+    "lateral_area": 0.1410000000000103,
+    "volume": 0.0013500000000021377,
+    "vertices": [
+      [
+        0.5500000000000007,
+        0.0600000000000076
+      ],
+      [
+        0.1000000000000014,
+        0.0600000000000183
+      ],
+      [
+        0.0999999999999908,
+        0.0399999999999796
+      ],
+      [
+        0.5499999999999972,
+        0.0399999999999832
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_wood_5",
+    "uuid": "ef225a6b-5936-45f5-a76b-de39af77f52f",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      1.05
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      1.1999999999999924,
+      0.099999999999989,
+      1.199999999999999,
+      0.0999999999999748
+    ],
+    "perimeter": 2.5999999999999552,
+    "area": 0.11999999999997786,
+    "lateral_area": 0.3899999999999933,
+    "volume": 0.017999999999996668,
+    "vertices": [
+      [
+        1.200000000000003,
+        0.1000000000000032
+      ],
+      [
+        1.07e-14,
+        0.1000000000000032
+      ],
+      [
+        0.0,
+        1.42e-14
+      ],
+      [
+        1.199999999999999,
+        2.84e-14
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_66",
+    "mesh_name": "window_glass_2",
+    "uuid": "a154eff9-52da-4977-89ad-575227488b84",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "glass",
+    "ifc_type": "window",
+    "component_layer": "glass",
+    "material_layer": "glass",
+    "block_name": "From_66",
+    "insert_position": {
+      "x": 0.0,
+      "y": -1.42e-14,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      1.05
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.4499999999999995,
+      0.020000000000038598,
+      0.4500000000000062,
+      0.020000000000024498
+    ],
+    "perimeter": 0.9400000000000688,
+    "area": 0.009000000000014254,
+    "lateral_area": 0.1410000000000103,
+    "volume": 0.0013500000000021368,
+    "vertices": [
+      [
+        1.099999999999998,
+        0.0600000000000112
+      ],
+      [
+        0.6499999999999986,
+        0.0600000000000218
+      ],
+      [
+        0.6499999999999879,
+        0.0399999999999832
+      ],
+      [
+        1.099999999999994,
+        0.0399999999999867
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_306",
+    "mesh_name": "window_wood_7",
+    "uuid": "73744c31-2b8e-45a3-8368-14fc20645859",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_306",
+    "insert_position": {
+      "x": -0.0010175968144308,
+      "y": 1.299999999999961,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.0
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      1.2,
+      1.1999999999999995,
+      1.2,
+      1.1999999999999995
+    ],
+    "perimeter": 4.799999999999999,
+    "area": 1.4399999999999993,
+    "lateral_area": 0.7199999999999999,
+    "volume": 0.08099997885245597,
+    "vertices": [
+      [
+        -3.6e-15,
+        0.0
+      ],
+      [
+        -3.6e-15,
+        1.2
+      ],
+      [
+        1.199999999999996,
+        1.2
+      ],
+      [
+        1.199999999999996,
+        0.0
+      ]
+    ],
+    "is_cut_by": [
+      "f38b746a-2969-433b-ab1a-039c569433f9",
+      "3df67771-91b9-4887-b9af-d8ecbe6e80d9"
+    ]
+  },
+  {
+    "dxf_handle": "block_306",
+    "mesh_name": "window_glass_3",
+    "uuid": "575eba8e-ac4f-4737-8966-74bc70f9790b",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "glass",
+    "ifc_type": "window",
+    "component_layer": "glass",
+    "material_layer": "glass",
+    "block_name": "From_306",
+    "insert_position": {
+      "x": -0.0010175968144308,
+      "y": 1.299999999999961,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.05
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.025,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.9999999999999967,
+      0.3999999999999985,
+      0.9999999999999998,
+      0.3999999999999985
+    ],
+    "perimeter": 2.7999999999999936,
+    "area": 0.3999999999999978,
+    "lateral_area": 0.06999999999999984,
+    "volume": 0.009999999999999945,
+    "vertices": [
+      [
+        0.5000000000000003,
+        0.1000000000000003
+      ],
+      [
+        0.5000000000000003,
+        1.099999999999997
+      ],
+      [
+        0.1000000000000018,
+        1.1
+      ],
+      [
+        0.1000000000000018,
+        0.1000000000000003
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_306",
+    "mesh_name": "window_glass_4",
+    "uuid": "5b954d5b-7207-47a0-bec5-e909f75a2052",
+    "role": 1,
+    "solid_flag": 1,
+    "layer": "glass",
+    "ifc_type": "window",
+    "component_layer": "glass",
+    "material_layer": "glass",
+    "block_name": "From_306",
+    "insert_position": {
+      "x": -0.0010175968144308,
+      "y": 1.299999999999961,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.05
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.025,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      0.9999999999999998,
+      0.49999999999999833,
+      0.9999999999999998,
+      0.49999999999999634
+    ],
+    "perimeter": 2.9999999999999947,
+    "area": 0.4999999999999972,
+    "lateral_area": 0.07499999999999987,
+    "volume": 0.012499999999999942,
+    "vertices": [
+      [
+        1.099999999999998,
+        0.1000000000000003
+      ],
+      [
+        1.1,
+        1.1
+      ],
+      [
+        0.6000000000000018,
+        1.1
+      ],
+      [
+        0.6000000000000018,
+        0.1000000000000003
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_306",
+    "mesh_name": "window_wood_6",
+    "uuid": "f38b746a-2969-433b-ab1a-039c569433f9",
+    "role": 0,
+    "solid_flag": 0,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_306",
+    "insert_position": {
+      "x": -0.0010175968144308,
+      "y": 1.299999999999961,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.0
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      1.0,
+      0.5000000000000001,
+      1.0,
+      0.5
+    ],
+    "perimeter": 3.0,
+    "area": 0.5,
+    "lateral_area": 0.44999999999999996,
+    "volume": 0.075,
+    "vertices": [
+      [
+        0.6000000000000001,
+        0.1
+      ],
+      [
+        0.6,
+        1.1
+      ],
+      [
+        1.1,
+        1.1
+      ],
+      [
+        1.1,
+        0.1
+      ]
+    ],
+    "is_cut_by": []
+  },
+  {
+    "dxf_handle": "block_306",
+    "mesh_name": "window_wood_8",
+    "uuid": "3df67771-91b9-4887-b9af-d8ecbe6e80d9",
+    "role": 0,
+    "solid_flag": 0,
+    "layer": "wood",
+    "ifc_type": "window",
+    "component_layer": "wood",
+    "material_layer": "wood",
+    "block_name": "From_306",
+    "insert_position": {
+      "x": -0.0010175968144308,
+      "y": 1.299999999999961,
+      "z": 0.9
+    },
+    "z_relative": 0.9,
+    "global_z": 0.0,
+    "z_list": [
+      0.0,
+      0.0
+    ],
+    "component_name": "",
+    "angle": 0.0,
+    "height": 0.15,
+    "rotate_x": 0.0,
+    "rotate_y": 0.0,
+    "segment_lengths": [
+      1.0,
+      0.40000000000000013,
+      1.0,
+      0.40000000000000024
+    ],
+    "perimeter": 2.8000000000000007,
+    "area": 0.4000000000000002,
+    "lateral_area": 0.4200000000000001,
+    "volume": 0.060000000000000026,
+    "vertices": [
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.0999999999999999,
+        1.1
+      ],
+      [
+        0.5,
+        1.1
+      ],
+      [
+        0.5000000000000002,
+        0.1000000000000001
+      ]
+    ],
+    "is_cut_by": []
+  }
+]
