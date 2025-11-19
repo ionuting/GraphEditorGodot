@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {
+      "id": 0,
+      "type": "node",
+      "label": "Node1",
+      "pos_x": 100.0,
+      "pos_y": 100.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 0,
+        "type": "Node",
+        "name": "Node1",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    }
+  ],
+  "edges": [],
+  "version": "1.0",
+  "timestamp": "2025-09-29T07:04:48"
+}

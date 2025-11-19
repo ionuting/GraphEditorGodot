@@ -27,80 +27,149 @@ script = ExtResource("2_r0du0")
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 layer = 0
 
+[node name="MainHBox" type="HBoxContainer" parent="CanvasLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LeftPanel" type="VBoxContainer" parent="CanvasLayer/MainHBox"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ToolsLabel" type="Label" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "=== TOOLS ==="
+horizontal_alignment = 1
+
+[node name="UndoButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Undo"
+
+[node name="RedoButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Redo"
+
+[node name="Separator1" type="HSeparator" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="SaveButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Save"
+
+[node name="LoadButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Load"
+
+[node name="Separator2" type="HSeparator" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="AddCircleButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Add Node"
+
+[node name="AddSquareButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Add Room"
+
+[node name="AddIconButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Add Window"
+
+[node name="AddDoorButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Add Door"
+
+[node name="Separator3" type="HSeparator" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="AddInteraxButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Interax Coords"
+
+[node name="LevelConfigButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Project Config"
+
+[node name="View3DButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Toggle 3D View"
+
+[node name="Separator4" type="HSeparator" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="ExportGraphMLButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Export GraphML"
+
+[node name="ExportSchemaButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Export Schema"
+
+[node name="Separator5" type="HSeparator" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+
+[node name="ConnectModeButton" type="CheckButton" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Connect Mode"
+
+[node name="MultiSelectLabel" type="Label" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Multi-Select: OFF"
+
+[node name="CancelMultiSelectButton" type="Button" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+text = "Cancel Multi-Select"
+
+[node name="Spacer" type="Control" parent="CanvasLayer/MainHBox/LeftPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CenterContainer" type="Control" parent="CanvasLayer/MainHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="CanvasLayer/MainHBox"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LayersLabel" type="Label" parent="CanvasLayer/MainHBox/RightPanel"]
+layout_mode = 2
+text = "=== LAYERS ==="
+horizontal_alignment = 1
+
+[node name="LayersScroll" type="ScrollContainer" parent="CanvasLayer/MainHBox/RightPanel"]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LayersVBox" type="VBoxContainer" parent="CanvasLayer/MainHBox/RightPanel/LayersScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddLayerButton" type="Button" parent="CanvasLayer/MainHBox/RightPanel"]
+layout_mode = 2
+text = "+ Add Layer"
+
+[node name="Separator" type="HSeparator" parent="CanvasLayer/MainHBox/RightPanel"]
+layout_mode = 2
+
+[node name="PropertiesPanel" type="Panel" parent="CanvasLayer/MainHBox/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("4_cm0pq")
+
 [node name="FileDialog" type="FileDialog" parent="CanvasLayer"]
-mode = 1
 position = Vector2i(0, 36)
 access = 2
 
-[node name="SaveButton" type="Button" parent="CanvasLayer"]
-offset_left = 15.0
-offset_top = 41.0
-offset_right = 59.0
-offset_bottom = 72.0
-text = "Save"
-
-[node name="LoadButton" type="Button" parent="CanvasLayer"]
-offset_left = 67.0
-offset_top = 40.0
-offset_right = 113.0
-offset_bottom = 71.0
-text = "Load"
-
-[node name="AddCircleButton" type="Button" parent="CanvasLayer"]
-offset_left = 18.0
-offset_top = 124.0
-offset_right = 112.0
-offset_bottom = 155.0
-text = "Node
-"
-
-[node name="AddSquareButton" type="Button" parent="CanvasLayer"]
-offset_left = 18.0
-offset_top = 162.0
-offset_right = 114.0
-offset_bottom = 193.0
-text = "Room"
-
-[node name="AddIconButton" type="Button" parent="CanvasLayer"]
-offset_left = 22.0
-offset_top = 203.0
-offset_right = 114.0
-offset_bottom = 234.0
-text = "Window"
-
-[node name="AddDoorButton" type="Button" parent="CanvasLayer"]
-offset_left = 24.0
-offset_top = 244.0
-offset_right = 114.0
-offset_bottom = 275.0
-text = "Door"
-
-[node name="View3DButton" type="Button" parent="CanvasLayer"]
-offset_left = 29.0
-offset_top = 319.0
-offset_right = 111.0
-offset_bottom = 350.0
-text = "3D"
-
-[node name="ConnectModeButton" type="CheckButton" parent="CanvasLayer"]
-anchors_preset = -1
-anchor_right = 0.153
-anchor_bottom = 0.034
-offset_left = 15.0
-offset_top = 287.0
-offset_right = -0.256012
-offset_bottom = 295.968
-text = "Connect mode"
-
-[node name="PropertiesPanel" type="Panel" parent="CanvasLayer"]
-layout_direction = 1
-offset_left = 8.0
-offset_top = 370.0
-offset_right = 341.0
-offset_bottom = 922.0
-script = ExtResource("4_cm0pq")
-
 [node name="SubViewportContainer" type="SubViewportContainer" parent="CanvasLayer"]
+visible = false
 z_index = 11
 offset_left = 40.0
 offset_top = 1060.0
@@ -111,7 +180,7 @@ stretch = true
 [node name="SubViewport" type="SubViewport" parent="CanvasLayer/SubViewportContainer"]
 handle_input_locally = false
 size = Vector2i(331, 280)
-render_target_update_mode = 4
+render_target_update_mode = 0
 
 [node name="Node3D" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport"]
 
@@ -121,11 +190,3 @@ render_target_update_mode = 4
 mesh = SubResource("BoxMesh_r0du0")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="CanvasLayer/SubViewportContainer/SubViewport/Node3D"]
-
-[node name="AddInteraxButton" type="Button" parent="CanvasLayer"]
-offset_left = 127.0
-offset_top = 39.0
-offset_right = 191.0
-offset_bottom = 70.0
-text = "Interax
-"

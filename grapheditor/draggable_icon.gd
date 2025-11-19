@@ -1,20 +1,28 @@
 extends Node2D
 
+# Load UUID generator
+const UUIDGenerator = preload("res://UUIDGenerator.gd")
+
 var size = 50.0  # Dimensiunea zonei de selecție (pentru clic)
 var is_selected = false  # Starea de selecție pentru mutare
 var is_dragging = false  # Starea de drag
 var is_selected_for_connection = false  # Starea de selecție pentru conexiune
 var type = "Process"  # Tipul nodului (Input, Output, Process)
 var obj_name = "Icon"  # Numele nodului
-var id = 0  # ID unic pentru nod
+var id = 0  # ID unic pentru nod (legacy, kept for compatibility)
 
-# Dictionar meta pentru nod (compatibil cu PropertiesPanel / Circle.gd)
+# Extensible node_info dictionary with mandatory and custom properties
+# Mandatory properties: uuid, type, index, layer, visible
 var node_info = {
-	"index": 0,
-	"type": "icon",
-	"name": "icon0",
-	"offset": 1.0,
-	"elevation": 0.9
+	"uuid": "",  # Unique identifier (generated automatically)
+	"type": "icon",  # Node type
+	"index": 0,  # Node index
+	"layer": "architectural",  # Layer assignment
+	"visible": true,  # Visibility flag
+	"name": "icon0",  # Display name
+	"offset": 1.0,  # Window/icon offset
+	"elevation": 0.9,  # Elevation level
+	"properties": {}  # Additional custom properties storage
 }
 
 signal circle_selected_for_connection(node)  # Semnal pentru conexiune
@@ -27,11 +35,25 @@ func _ready():
 	if sprite == null:
 		push_error("Sprite2D nu a fost găsit în Icon!")
 		return
-
-	# sincronizează node_info cu proprietățile curente ale nodului
+	
+	# Generate UUID if not already set
+	if node_info["uuid"] == "" or node_info["uuid"] == null:
+		node_info["uuid"] = UUIDGenerator.generate_uuid()
+	
+	# Sincronizează node_info cu proprietățile curente ale nodului
 	node_info["name"] = str(type) + str(id)
 	node_info["index"] = id
 	node_info["type"] = type
+	node_info["visible"] = visible
+	
+	# Ensure layer is set
+	if not node_info.has("layer") or node_info["layer"] == "":
+		node_info["layer"] = "architectural"
+	
+	# Ensure properties dict exists
+	if not node_info.has("properties"):
+		node_info["properties"] = {}
+	
 	obj_name = node_info["name"]
 
 func _draw():
@@ -59,17 +81,17 @@ func _input(event):
 			if is_mouse_over:
 				var main_node = get_node("/root/Main")
 				if main_node and main_node.is_connect_mode_active():
-					is_selected_for_connection = true
+					# Only emit the signal; main_scene manages visual selection
 					emit_signal("circle_selected_for_connection", self)
 					print("Iconiță selectată pentru conexiune:", name)  # Debug
 					queue_redraw()
 				else:
-					is_selected = true
+					# Keep drag logic but don't set selection locally
 					is_dragging = true
 					emit_signal("circle_selected_for_properties", self)
 					queue_redraw()
 		else:
-			is_selected = false
+			# Nu resetăm is_selected când eliberăm mouse-ul, doar is_dragging
 			is_dragging = false
 			queue_redraw()
 	
@@ -83,4 +105,8 @@ func _input(event):
 
 func reset_connection_selection():
 	is_selected_for_connection = false
+	queue_redraw()
+
+func reset_selection():
+	is_selected = false
 	queue_redraw()

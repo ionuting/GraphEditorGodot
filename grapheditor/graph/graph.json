@@ -1,0 +1,926 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "type": "process",
+      "label": "Node2",
+      "pos_x": -422.0,
+      "pos_y": -54.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 1,
+        "type": "Process",
+        "name": "Node2",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 2,
+      "type": "process",
+      "label": "Node3",
+      "pos_x": -198.0,
+      "pos_y": -44.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 2,
+        "type": "Process",
+        "name": "Node3",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 3,
+      "type": "process",
+      "label": "Node4",
+      "pos_x": 0.564208984375,
+      "pos_y": -36.1293334960938,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 3,
+        "type": "Process",
+        "name": "Node4",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 4,
+      "type": "process",
+      "label": "Node5",
+      "pos_x": -674.1982421875,
+      "pos_y": -274.132202148438,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 4,
+        "type": "Process",
+        "name": "Node5",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 5,
+      "type": "process",
+      "label": "Node6",
+      "pos_x": -432.8759765625,
+      "pos_y": -267.520629882813,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 5,
+        "type": "Process",
+        "name": "Node6",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 6,
+      "type": "process",
+      "label": "Node7",
+      "pos_x": -209.803833007813,
+      "pos_y": -269.719909667969,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 6,
+        "type": "Process",
+        "name": "Node7",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 7,
+      "type": "process",
+      "label": "Node8",
+      "pos_x": -11.72998046875,
+      "pos_y": -258.791687011719,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 7,
+        "type": "Process",
+        "name": "Node8",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 8,
+      "type": "process",
+      "label": "Node9",
+      "pos_x": -680.0,
+      "pos_y": -478.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 8,
+        "type": "Process",
+        "name": "Node9",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 9,
+      "type": "process",
+      "label": "Node10",
+      "pos_x": -426.0,
+      "pos_y": -480.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 9,
+        "type": "Process",
+        "name": "Node10",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 10,
+      "type": "process",
+      "label": "Node11",
+      "pos_x": -226.0,
+      "pos_y": -484.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 10,
+        "type": "Process",
+        "name": "Node11",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 11,
+      "type": "process",
+      "label": "Node12",
+      "pos_x": -4.3922119140625,
+      "pos_y": -468.512023925781,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 11,
+        "type": "Process",
+        "name": "Node12",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 12,
+      "type": "process",
+      "label": "Node13",
+      "pos_x": -668.0,
+      "pos_y": -724.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 12,
+        "type": "Process",
+        "name": "Node13",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 13,
+      "type": "process",
+      "label": "Node14",
+      "pos_x": -430.0,
+      "pos_y": -734.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 13,
+        "type": "Process",
+        "name": "Node14",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 14,
+      "type": "process",
+      "label": "Node15",
+      "pos_x": -222.0,
+      "pos_y": -732.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 14,
+        "type": "Process",
+        "name": "Node15",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 15,
+      "type": "process",
+      "label": "Node16",
+      "pos_x": -20.0,
+      "pos_y": -732.0,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 15,
+        "type": "Process",
+        "name": "Node16",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 19,
+      "type": "room",
+      "label": "Room19",
+      "pos_x": -310.889892578125,
+      "pos_y": -201.418579101563,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 19,
+        "type": "Room",
+        "name": "Room19",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 23,
+      "type": "room",
+      "label": "B",
+      "pos_x": -534.918273925781,
+      "pos_y": -165.90185546875,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 23,
+        "type": "Room",
+        "name": "B",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 24,
+      "type": "room",
+      "label": "Room24",
+      "pos_x": -545.846496582031,
+      "pos_y": -594.834289550781,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 24,
+        "type": "Room",
+        "name": "Room24",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 25,
+      "type": "room",
+      "label": "Room25",
+      "pos_x": -340.0,
+      "pos_y": -604.0,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 25,
+        "type": "Room",
+        "name": "Room25",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 26,
+      "type": "room",
+      "label": "Room26",
+      "pos_x": -129.208251953125,
+      "pos_y": -601.664428710938,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 26,
+        "type": "Room",
+        "name": "Room26",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 27,
+      "type": "process",
+      "label": "Node22",
+      "pos_x": -671.520935058594,
+      "pos_y": -59.351806640625,
+      "node_shape": "Circle",
+      "visible": true,
+      "node_info": {
+        "index": 0,
+        "type": "Process",
+        "name": "Node22",
+        "has_column": true,
+        "column_type": "2525"
+      }
+    },
+    {
+      "id": 28,
+      "type": "room",
+      "label": "Room28",
+      "pos_x": -506.231689453125,
+      "pos_y": 226.147766113281,
+      "node_shape": "Square",
+      "visible": true,
+      "node_info": {
+        "index": 28,
+        "type": "shell",
+        "name": "Room28",
+        "offset": 0.0,
+        "height": 2.55
+      }
+    },
+    {
+      "id": 29,
+      "type": "window",
+      "label": "Window29",
+      "pos_x": -488.473388671875,
+      "pos_y": 25.3418579101563,
+      "node_shape": "Icon",
+      "visible": true,
+      "node_info": {
+        "index": 29,
+        "type": "Window",
+        "name": "Window29",
+        "offset": 1.0,
+        "elevation": 0.9
+      }
+    },
+    {
+      "id": 31,
+      "type": "window",
+      "label": "Window31",
+      "pos_x": -569.068908691406,
+      "pos_y": -769.685729980469,
+      "node_shape": "Icon",
+      "visible": true,
+      "node_info": {
+        "index": 31,
+        "type": "Window",
+        "name": "Window31",
+        "offset": 1.0,
+        "elevation": 0.9
+      }
+    },
+    {
+      "id": 32,
+      "type": "window",
+      "label": "Window32",
+      "pos_x": -353.236694335938,
+      "pos_y": -772.417785644531,
+      "node_shape": "Icon",
+      "visible": true,
+      "node_info": {
+        "index": 32,
+        "type": "Window",
+        "name": "Window32",
+        "offset": 1.0,
+        "elevation": 0.9
+      }
+    },
+    {
+      "id": 33,
+      "type": "window",
+      "label": "Window33",
+      "pos_x": -121.01220703125,
+      "pos_y": -780.613891601563,
+      "node_shape": "Icon",
+      "visible": true,
+      "node_info": {
+        "index": 33,
+        "type": "Window",
+        "name": "Window33",
+        "offset": 1.0,
+        "elevation": 0.9
+      }
+    },
+    {
+      "id": 34,
+      "type": "door",
+      "label": "Door34",
+      "pos_x": -316.35400390625,
+      "pos_y": -89.4043579101563,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 34,
+        "type": "Door",
+        "name": "Door34",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 35,
+      "type": "door",
+      "label": "Door35",
+      "pos_x": -368.262939453125,
+      "pos_y": -213.712829589844,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 35,
+        "type": "Door",
+        "name": "Door35",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 36,
+      "type": "door",
+      "label": "Door36",
+      "pos_x": -379.191162109375,
+      "pos_y": -402.224517822266,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 36,
+        "type": "Door",
+        "name": "Door36",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 37,
+      "type": "door",
+      "label": "Door37",
+      "pos_x": -332.746337890625,
+      "pos_y": -534.729125976563,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 37,
+        "type": "Door",
+        "name": "Door37",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 38,
+      "type": "door",
+      "label": "Door38",
+      "pos_x": -268.543090820313,
+      "pos_y": -377.636016845703,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 38,
+        "type": "Door",
+        "name": "Door38",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 39,
+      "type": "door",
+      "label": "Door39",
+      "pos_x": -243.95458984375,
+      "pos_y": -185.026245117188,
+      "node_shape": "Door",
+      "visible": true,
+      "node_info": {
+        "index": 39,
+        "type": "Door",
+        "name": "Door39",
+        "offset": 1.0,
+        "elevation": 0.0
+      }
+    },
+    {
+      "id": 40,
+      "type": "window",
+      "label": "Window40",
+      "pos_x": -97.7896728515625,
+      "pos_y": 28.0739135742188,
+      "node_shape": "Icon",
+      "visible": true,
+      "node_info": {
+        "index": 40,
+        "type": "Window",
+        "name": "Window40",
+        "offset": 1.0,
+        "elevation": 0.9
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": 1,
+      "target": 2,
+      "label": "Edge2",
+      "type": "process"
+    },
+    {
+      "source": 2,
+      "target": 3,
+      "label": "Edge3",
+      "type": "process"
+    },
+    {
+      "source": 4,
+      "target": 5,
+      "label": "Edge4",
+      "type": "process"
+    },
+    {
+      "source": 5,
+      "target": 6,
+      "label": "Edge5",
+      "type": "process"
+    },
+    {
+      "source": 6,
+      "target": 7,
+      "label": "Edge6",
+      "type": "process"
+    },
+    {
+      "source": 8,
+      "target": 9,
+      "label": "Edge7",
+      "type": "process"
+    },
+    {
+      "source": 9,
+      "target": 10,
+      "label": "Edge8",
+      "type": "process"
+    },
+    {
+      "source": 10,
+      "target": 11,
+      "label": "Edge9",
+      "type": "process"
+    },
+    {
+      "source": 12,
+      "target": 13,
+      "label": "Edge10",
+      "type": "process"
+    },
+    {
+      "source": 13,
+      "target": 14,
+      "label": "Edge11",
+      "type": "process"
+    },
+    {
+      "source": 14,
+      "target": 15,
+      "label": "Edge12",
+      "type": "process"
+    },
+    {
+      "source": 4,
+      "target": 8,
+      "label": "Edge14",
+      "type": "process"
+    },
+    {
+      "source": 8,
+      "target": 12,
+      "label": "Edge15",
+      "type": "process"
+    },
+    {
+      "source": 1,
+      "target": 5,
+      "label": "Edge16",
+      "type": "process"
+    },
+    {
+      "source": 5,
+      "target": 9,
+      "label": "Edge17",
+      "type": "process"
+    },
+    {
+      "source": 9,
+      "target": 13,
+      "label": "Edge18",
+      "type": "process"
+    },
+    {
+      "source": 2,
+      "target": 6,
+      "label": "Edge19",
+      "type": "process"
+    },
+    {
+      "source": 10,
+      "target": 6,
+      "label": "Edge20",
+      "type": "process"
+    },
+    {
+      "source": 10,
+      "target": 14,
+      "label": "Edge21",
+      "type": "process"
+    },
+    {
+      "source": 3,
+      "target": 7,
+      "label": "Edge22",
+      "type": "process"
+    },
+    {
+      "source": 7,
+      "target": 11,
+      "label": "Edge23",
+      "type": "process"
+    },
+    {
+      "source": 15,
+      "target": 11,
+      "label": "Edge24",
+      "type": "process"
+    },
+    {
+      "source": 27,
+      "target": 1,
+      "label": "Edge23",
+      "type": "process"
+    },
+    {
+      "source": 27,
+      "target": 4,
+      "label": "Edge24",
+      "type": "process"
+    },
+    {
+      "source": 23,
+      "target": 27,
+      "label": "Edge25",
+      "type": "process"
+    },
+    {
+      "source": 23,
+      "target": 1,
+      "label": "Edge26",
+      "type": "process"
+    },
+    {
+      "source": 23,
+      "target": 5,
+      "label": "Edge27",
+      "type": "process"
+    },
+    {
+      "source": 23,
+      "target": 4,
+      "label": "Edge28",
+      "type": "process"
+    },
+    {
+      "source": 19,
+      "target": 1,
+      "label": "Edge29",
+      "type": "process"
+    },
+    {
+      "source": 19,
+      "target": 2,
+      "label": "Edge30",
+      "type": "process"
+    },
+    {
+      "source": 19,
+      "target": 10,
+      "label": "Edge31",
+      "type": "process"
+    },
+    {
+      "source": 19,
+      "target": 9,
+      "label": "Edge32",
+      "type": "process"
+    },
+    {
+      "source": 24,
+      "target": 4,
+      "label": "Edge33",
+      "type": "process"
+    },
+    {
+      "source": 24,
+      "target": 5,
+      "label": "Edge34",
+      "type": "process"
+    },
+    {
+      "source": 24,
+      "target": 13,
+      "label": "Edge35",
+      "type": "process"
+    },
+    {
+      "source": 24,
+      "target": 12,
+      "label": "Edge36",
+      "type": "process"
+    },
+    {
+      "source": 25,
+      "target": 9,
+      "label": "Edge37",
+      "type": "process"
+    },
+    {
+      "source": 25,
+      "target": 10,
+      "label": "Edge38",
+      "type": "process"
+    },
+    {
+      "source": 25,
+      "target": 14,
+      "label": "Edge39",
+      "type": "process"
+    },
+    {
+      "source": 25,
+      "target": 13,
+      "label": "Edge40",
+      "type": "process"
+    },
+    {
+      "source": 20,
+      "target": 2,
+      "label": "Edge41",
+      "type": "process"
+    },
+    {
+      "source": 20,
+      "target": 3,
+      "label": "Edge42",
+      "type": "process"
+    },
+    {
+      "source": 20,
+      "target": 7,
+      "label": "Edge43",
+      "type": "process"
+    },
+    {
+      "source": 20,
+      "target": 6,
+      "label": "Edge44",
+      "type": "process"
+    },
+    {
+      "source": 26,
+      "target": 6,
+      "label": "Edge45",
+      "type": "process"
+    },
+    {
+      "source": 26,
+      "target": 7,
+      "label": "Edge46",
+      "type": "process"
+    },
+    {
+      "source": 26,
+      "target": 15,
+      "label": "Edge47",
+      "type": "process"
+    },
+    {
+      "source": 26,
+      "target": 14,
+      "label": "Edge48",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 27,
+      "label": "Edge49",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 2,
+      "label": "Edge50",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 6,
+      "label": "Edge51",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 7,
+      "label": "Edge52",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 15,
+      "label": "Edge53",
+      "type": "process"
+    },
+    {
+      "source": 28,
+      "target": 12,
+      "label": "Edge54",
+      "type": "process"
+    },
+    {
+      "source": 29,
+      "target": 27,
+      "label": "Edge55",
+      "type": "process"
+    },
+    {
+      "source": 40,
+      "target": 2,
+      "label": "Edge56",
+      "type": "process"
+    },
+    {
+      "source": 31,
+      "target": 12,
+      "label": "Edge57",
+      "type": "process"
+    },
+    {
+      "source": 32,
+      "target": 13,
+      "label": "Edge58",
+      "type": "process"
+    },
+    {
+      "source": 33,
+      "target": 14,
+      "label": "Edge59",
+      "type": "process"
+    },
+    {
+      "source": 34,
+      "target": 1,
+      "label": "Edge60",
+      "type": "process"
+    },
+    {
+      "source": 35,
+      "target": 1,
+      "label": "Edge61",
+      "type": "process"
+    },
+    {
+      "source": 36,
+      "target": 5,
+      "label": "Edge62",
+      "type": "process"
+    },
+    {
+      "source": 37,
+      "target": 9,
+      "label": "Edge63",
+      "type": "process"
+    },
+    {
+      "source": 38,
+      "target": 6,
+      "label": "Edge64",
+      "type": "process"
+    },
+    {
+      "source": 39,
+      "target": 2,
+      "label": "Edge65",
+      "type": "process"
+    }
+  ],
+  "version": "1.0",
+  "timestamp": "2025-09-29T06:42:43"
+}
